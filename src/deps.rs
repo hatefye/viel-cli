@@ -81,13 +81,16 @@ pub fn install_mpv(player: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-    if ran && has_player(player) {
-        println!("\nmpv installed.");
-        true
-    } else {
+    if !ran {
         println!("\ninstall did not complete. see https://mpv.io/installation/");
-        false
+        return false;
     }
+    if has_player(player) {
+        println!("\nmpv installed.");
+    } else {
+        println!("\nmpv installed. restart your terminal so it lands on PATH, then run viel again.");
+    }
+    true
 }
 
 pub fn open_install_page() {
@@ -118,7 +121,17 @@ fn plan() -> Option<Plan> {
         if which("winget") {
             return Some(build(
                 "winget",
-                &["install", "--silent", "--accept-package-agreements", "--accept-source-agreements", "mpv"],
+                &[
+                    "install",
+                    "--id",
+                    "shinchiro.mpv",
+                    "--exact",
+                    "--source",
+                    "winget",
+                    "--silent",
+                    "--accept-package-agreements",
+                    "--accept-source-agreements",
+                ],
                 false,
             ));
         }
