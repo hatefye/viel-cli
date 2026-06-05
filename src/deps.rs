@@ -15,7 +15,7 @@ const OK: u8 = 1;
 const FAIL: u8 = 2;
 
 #[cfg(target_os = "windows")]
-const SCOOP_CMD: &str = "if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) { Invoke-RestMethod get.scoop.sh | Invoke-Expression }; scoop install mpv";
+const SCOOP_CMD: &str = "if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) { Invoke-RestMethod get.scoop.sh | Invoke-Expression }; scoop install git; scoop bucket add extras; scoop install mpv";
 
 pub struct Report {
     pub player: bool,
