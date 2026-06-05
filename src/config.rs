@@ -46,7 +46,13 @@ pub fn session() -> Option<String> {
 pub fn save_session(token: &str) -> Result<()> {
     if let Some(dir) = dir() {
         fs::create_dir_all(&dir)?;
-        fs::write(dir.join("session"), token)?;
+        let path = dir.join("session");
+        fs::write(&path, token)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
+        }
     }
     Ok(())
 }

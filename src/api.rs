@@ -3,6 +3,7 @@ use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt;
 use std::time::Duration;
 
@@ -35,6 +36,8 @@ pub struct Title {
     pub name: String,
     pub year: String,
     pub rating: f64,
+    pub overview: Option<String>,
+    pub poster_path: Option<String>,
 }
 
 impl fmt::Display for Title {
@@ -82,33 +85,28 @@ pub struct Stream {
     pub start: Option<f64>,
 }
 
-#[derive(Deserialize)]
-pub struct HistoryEntry {
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub content_id: String,
-    #[serde(default)]
-    pub season: i64,
-    #[serde(default)]
-    pub episode: i64,
+pub struct ContinueRow {
+    pub id: u64,
+    pub kind: Kind,
+    pub show: String,
+    pub season: u32,
+    pub episode: u32,
     pub position: f64,
     pub duration: f64,
-    pub title: Option<String>,
 }
 
-impl HistoryEntry {
-    pub fn name(&self) -> &str {
-        self.title.as_deref().unwrap_or("untitled")
+impl ContinueRow {
+    pub fn resume_at(&self) -> Option<f64> {
+        (self.position > 5.0 && self.position < self.duration - 30.0).then_some(self.position)
     }
 }
 
-impl fmt::Display for HistoryEntry {
+impl fmt::Display for ContinueRow {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let left = remaining(self.duration - self.position);
-        if self.kind == "tv" {
-            write!(f, "{} · S{}E{} · {} left", self.name(), self.season, self.episode, left)
-        } else {
-            write!(f, "{} · {} left", self.name(), left)
+        match self.kind {
+            Kind::Tv => write!(f, "{} · S{}E{} · {} left", self.show, self.season, self.episode, left),
+            Kind::Movie => write!(f, "{} · {} left", self.show, left),
         }
     }
 }
@@ -132,15 +130,20 @@ impl Api {
         }
     }
 
-    pub fn search(&self, kind: Kind, query: &str) -> Result<Vec<Title>> {
+    pub fn reachable(&self) -> bool {
+        let url = format!("{}/api/announcement", self.host);
+        self.client
+            .get(url)
+            .timeout(Duration::from_secs(8))
+            .send()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+    }
+
+    pub fn search(&self, query: &str) -> Result<Vec<Title>> {
         let url = format!("{}/proxy/tmdb/search/multi", self.host);
         let resp: SearchResp = self.client.get(url).query(&[("query", query)]).send()?.json()?;
-        Ok(resp
-            .results
-            .into_iter()
-            .filter_map(SearchItem::into_title)
-            .filter(|t| t.kind == kind)
-            .collect())
+        Ok(resp.results.into_iter().filter_map(SearchItem::into_title).collect())
     }
 
     pub fn trending(&self) -> Result<Vec<Title>> {
@@ -203,23 +206,34 @@ impl Api {
         Err(anyhow!("no playable source found"))
     }
 
+    pub fn poster(&self, poster_path: &str) -> Option<Vec<u8>> {
+        let src = format!("https://image.tmdb.org/t/p/w342{poster_path}");
+        let url = format!("{}/proxy/image", self.host);
+        let resp = self.client.get(url).query(&[("url", &src)]).send().ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        resp.bytes().ok().map(|b| b.to_vec())
+    }
+
+    pub fn register(&self, username: &str, password: &str) -> Result<String> {
+        self.ensure_secure()?;
+        let url = format!("{}/api/auth/register", self.host);
+        let resp = self.client.post(url).json(&Credentials { username, password }).send()?;
+        if !resp.status().is_success() {
+            bail!("sign up failed (username may be taken, or the password is too short)");
+        }
+        token_from(&resp)
+    }
+
     pub fn login(&self, username: &str, password: &str) -> Result<String> {
+        self.ensure_secure()?;
         let url = format!("{}/api/auth/login", self.host);
         let resp = self.client.post(url).json(&Credentials { username, password }).send()?;
         if !resp.status().is_success() {
             bail!("login failed (check username and password)");
         }
-        for value in resp.headers().get_all(SET_COOKIE) {
-            if let Ok(text) = value.to_str() {
-                if let Some(rest) = text.strip_prefix("viel_sess=") {
-                    let token = rest.split(';').next().unwrap_or_default().to_string();
-                    if !token.is_empty() {
-                        return Ok(token);
-                    }
-                }
-            }
-        }
-        bail!("login succeeded but no session cookie was returned")
+        token_from(&resp)
     }
 
     pub fn me(&self) -> Result<Option<String>> {
@@ -237,10 +251,49 @@ impl Api {
         Ok(resp.json::<HistoryResp>()?.items)
     }
 
+    pub fn continue_rows(&self) -> Result<Vec<ContinueRow>> {
+        let mut seen = HashSet::new();
+        let mut rows = Vec::new();
+        for entry in self.history()? {
+            if !seen.insert((entry.kind.clone(), entry.content_id.clone())) {
+                continue;
+            }
+            let id: u64 = match entry.content_id.parse() {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let kind = if entry.kind == "tv" { Kind::Tv } else { Kind::Movie };
+            let show = self
+                .title_name(&entry.kind, id)
+                .or_else(|| entry.title.clone())
+                .unwrap_or_else(|| "untitled".into());
+            rows.push(ContinueRow {
+                id,
+                kind,
+                show,
+                season: entry.season as u32,
+                episode: entry.episode as u32,
+                position: entry.position,
+                duration: entry.duration,
+            });
+            if rows.len() >= 8 {
+                break;
+            }
+        }
+        Ok(rows)
+    }
+
     pub fn save_progress(&self, update: &ProgressUpdate) -> Result<()> {
         let url = format!("{}/api/me/history", self.host);
         self.authed(self.client.post(url)).json(update).send()?;
         Ok(())
+    }
+
+    fn title_name(&self, kind: &str, id: u64) -> Option<String> {
+        let slug = if kind == "tv" { "tv" } else { "movie" };
+        let url = format!("{}/proxy/tmdb/{}/{}", self.host, slug, id);
+        let resp: NameResp = self.client.get(url).send().ok()?.json().ok()?;
+        resp.name.or(resp.title)
     }
 
     fn authed(&self, builder: RequestBuilder) -> RequestBuilder {
@@ -249,6 +302,30 @@ impl Api {
             None => builder,
         }
     }
+
+    fn ensure_secure(&self) -> Result<()> {
+        if self.host.starts_with("https://")
+            || self.host.contains("localhost")
+            || self.host.contains("127.0.0.1")
+        {
+            return Ok(());
+        }
+        bail!("refusing to send credentials over an insecure connection: {}\nuse an https host", self.host)
+    }
+}
+
+fn token_from(resp: &reqwest::blocking::Response) -> Result<String> {
+    for value in resp.headers().get_all(SET_COOKIE) {
+        if let Ok(text) = value.to_str() {
+            if let Some(rest) = text.strip_prefix("viel_sess=") {
+                let token = rest.split(';').next().unwrap_or_default().to_string();
+                if !token.is_empty() {
+                    return Ok(token);
+                }
+            }
+        }
+    }
+    bail!("authenticated but no session cookie was returned")
 }
 
 #[derive(Serialize)]
@@ -267,6 +344,20 @@ pub struct ProgressUpdate<'a> {
     pub position: f64,
     pub duration: f64,
     pub title: &'a str,
+}
+
+#[derive(Deserialize)]
+pub struct HistoryEntry {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub content_id: String,
+    #[serde(default)]
+    pub season: i64,
+    #[serde(default)]
+    pub episode: i64,
+    pub position: f64,
+    pub duration: f64,
+    pub title: Option<String>,
 }
 
 fn remaining(seconds: f64) -> String {
@@ -288,6 +379,8 @@ struct SearchItem {
     release_date: Option<String>,
     first_air_date: Option<String>,
     vote_average: Option<f64>,
+    overview: Option<String>,
+    poster_path: Option<String>,
 }
 
 impl SearchItem {
@@ -306,6 +399,8 @@ impl SearchItem {
             name,
             year,
             rating: self.vote_average.unwrap_or(0.0),
+            overview: self.overview.filter(|s| !s.is_empty()),
+            poster_path: self.poster_path.filter(|s| !s.is_empty()),
         })
     }
 }
@@ -353,4 +448,10 @@ struct MeResp {
 #[derive(Deserialize)]
 struct MeUser {
     username: String,
+}
+
+#[derive(Deserialize)]
+struct NameResp {
+    name: Option<String>,
+    title: Option<String>,
 }
