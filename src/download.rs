@@ -1,6 +1,6 @@
 use crate::api::{Api, Kind, Title};
 use crate::config::Config;
-use crate::{deps, ui};
+use crate::{deps, picker, ui};
 use anyhow::{bail, Context, Result};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -46,7 +46,7 @@ pub fn flow(api: &Api, cfg: &Config) -> Result<()> {
         ui::pause();
         return Ok(());
     }
-    let Some(title) = ui::select("results", results)? else {
+    let Some(title) = picker::pick_title(api, "download", results)? else {
         return Ok(());
     };
 

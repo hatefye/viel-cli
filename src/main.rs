@@ -4,7 +4,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use viel::api::{Api, Kind, ProgressUpdate, Title};
 use viel::config::{self, Config};
-use viel::{deps, download, player, ui};
+use viel::{deps, download, picker, player, ui};
 
 enum Home {
     Continue,
@@ -202,7 +202,7 @@ fn browse(api: &Api, cfg: &Config, logged_in: bool) -> Result<()> {
         sleep(Duration::from_millis(900));
         return Ok(());
     }
-    let Some(title) = ui::select("results", results)? else {
+    let Some(title) = picker::pick_title(api, "results", results)? else {
         return Ok(());
     };
     watch(api, cfg, logged_in, &title)
@@ -219,7 +219,7 @@ fn random(api: &Api, cfg: &Config, logged_in: bool) -> Result<()> {
 
 fn watch(api: &Api, cfg: &Config, logged_in: bool, title: &Title) -> Result<()> {
     ui::clear();
-    detail(api, title);
+    detail(title);
     match title.kind {
         Kind::Movie => {
             if ui::confirm("play this?")? {
@@ -267,12 +267,7 @@ fn resume(api: &Api, cfg: &Config) -> Result<()> {
     }
 }
 
-fn detail(api: &Api, title: &Title) {
-    if let Some(path) = &title.poster_path {
-        if let Some(bytes) = api.poster(path) {
-            ui::poster(&bytes);
-        }
-    }
+fn detail(title: &Title) {
     let year = if title.year.is_empty() {
         String::new()
     } else {

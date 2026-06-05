@@ -61,20 +61,6 @@ pub fn pause() {
     let _ = stdin().read_line(&mut line);
 }
 
-pub fn poster(bytes: &[u8]) {
-    let Ok(image) = image::load_from_memory(bytes) else {
-        return;
-    };
-    let cfg = viuer::Config {
-        width: Some(28),
-        height: Some(18),
-        absolute_offset: false,
-        ..Default::default()
-    };
-    let _ = viuer::print(&image, &cfg);
-    println!();
-}
-
 fn soft<T>(result: Result<T, InquireError>) -> Result<Option<T>> {
     match result {
         Ok(value) => Ok(Some(value)),
