@@ -14,6 +14,9 @@ const PENDING: u8 = 0;
 const OK: u8 = 1;
 const FAIL: u8 = 2;
 
+#[cfg(target_os = "windows")]
+const SCOOP_CMD: &str = "if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) { Invoke-RestMethod get.scoop.sh | Invoke-Expression }; scoop install mpv";
+
 pub struct Report {
     pub player: bool,
     pub host: bool,
@@ -141,58 +144,46 @@ fn plan() -> Option<Plan> {
     #[cfg(target_os = "macos")]
     {
         if which("brew") {
-            return Some(build("brew", &["install", "mpv"], false));
+            return Some(build("brew", &["install", "mpv"], false, None));
         }
     }
     #[cfg(target_os = "windows")]
     {
-        if which("winget") {
-            return Some(build(
-                "winget",
-                &[
-                    "install",
-                    "--id",
-                    "shinchiro.mpv",
-                    "--exact",
-                    "--source",
-                    "winget",
-                    "--silent",
-                    "--accept-package-agreements",
-                    "--accept-source-agreements",
-                ],
-                false,
-            ));
-        }
-        if which("scoop") {
-            return Some(build("scoop", &["install", "mpv"], false));
-        }
-        if which("choco") {
-            return Some(build("choco", &["install", "mpv", "-y"], false));
-        }
+        return Some(build(
+            "powershell",
+            &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", SCOOP_CMD],
+            false,
+            Some("scoop install mpv (sets up scoop if needed)"),
+        ));
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
         if which("apt-get") {
-            return Some(build("apt-get", &["install", "-y", "mpv"], true));
+            return Some(build("apt-get", &["install", "-y", "mpv"], true, None));
         }
         if which("dnf") {
-            return Some(build("dnf", &["install", "-y", "mpv"], true));
+            return Some(build("dnf", &["install", "-y", "mpv"], true, None));
         }
         if which("pacman") {
-            return Some(build("pacman", &["-S", "--noconfirm", "mpv"], true));
+            return Some(build("pacman", &["-S", "--noconfirm", "mpv"], true, None));
         }
         if which("zypper") {
-            return Some(build("zypper", &["install", "-y", "mpv"], true));
+            return Some(build("zypper", &["install", "-y", "mpv"], true, None));
         }
         if which("apk") {
-            return Some(build("apk", &["add", "mpv"], true));
+            return Some(build("apk", &["add", "mpv"], true, None));
         }
     }
-    None
+    #[allow(unreachable_code)]
+    {
+        None
+    }
 }
 
-fn build(program: &str, args: &[&str], sudo: bool) -> Plan {
-    let pretty = format!("{}{} {}", if sudo { "sudo " } else { "" }, program, args.join(" "));
+fn build(program: &str, args: &[&str], sudo: bool, pretty: Option<&str>) -> Plan {
+    let pretty = pretty.map(str::to_string).unwrap_or_else(|| {
+        format!("{}{} {}", if sudo { "sudo " } else { "" }, program, args.join(" "))
+    });
     if sudo {
         let mut full = vec![program.to_string()];
         full.extend(args.iter().map(|a| a.to_string()));
@@ -292,6 +283,7 @@ fn find_exe(dir: &std::path::Path, depth: u8) -> Option<String> {
     None
 }
 
+#[cfg(unix)]
 fn which(bin: &str) -> bool {
     Command::new(bin)
         .arg("--version")
