@@ -2,6 +2,7 @@ use anyhow::Result;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
@@ -31,8 +32,31 @@ impl Config {
     }
 
     fn from_file() -> Option<Self> {
-        let dirs = ProjectDirs::from("tv", "viel", "viel")?;
-        let raw = fs::read_to_string(dirs.config_dir().join("config.toml")).ok()?;
+        let raw = fs::read_to_string(dir()?.join("config.toml")).ok()?;
         toml::from_str(&raw).ok()
     }
+}
+
+pub fn session() -> Option<String> {
+    let raw = fs::read_to_string(dir()?.join("session")).ok()?;
+    let token = raw.trim().to_string();
+    (!token.is_empty()).then_some(token)
+}
+
+pub fn save_session(token: &str) -> Result<()> {
+    if let Some(dir) = dir() {
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join("session"), token)?;
+    }
+    Ok(())
+}
+
+pub fn clear_session() {
+    if let Some(dir) = dir() {
+        let _ = fs::remove_file(dir.join("session"));
+    }
+}
+
+fn dir() -> Option<PathBuf> {
+    ProjectDirs::from("tv", "viel", "viel").map(|d| d.config_dir().to_path_buf())
 }

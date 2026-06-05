@@ -1,6 +1,6 @@
 use anyhow::Result;
 use inquire::ui::{Color, RenderConfig, Styled};
-use inquire::{InquireError, Select, Text};
+use inquire::{InquireError, Password, PasswordDisplayMode, Select, Text};
 use std::fmt::Display;
 
 const RED: Color = Color::Rgb { r: 220, g: 38, b: 38 };
@@ -18,6 +18,15 @@ pub fn select<T: Display>(prompt: &str, options: Vec<T>) -> Result<Option<T>> {
 
 pub fn text(prompt: &str) -> Result<Option<String>> {
     soft(Text::new(prompt).prompt())
+}
+
+pub fn password(prompt: &str) -> Result<Option<String>> {
+    soft(
+        Password::new(prompt)
+            .with_display_mode(PasswordDisplayMode::Masked)
+            .without_confirmation()
+            .prompt(),
+    )
 }
 
 fn soft<T>(result: Result<T, InquireError>) -> Result<Option<T>> {
