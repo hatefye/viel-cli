@@ -13,6 +13,7 @@ enum Home {
     Random,
     Download,
     Account,
+    Settings,
     Quit,
 }
 
@@ -25,7 +26,27 @@ impl fmt::Display for Home {
             Home::Random => "random",
             Home::Download => "download",
             Home::Account => "account",
+            Home::Settings => "settings",
             Home::Quit => "quit",
+        };
+        f.write_str(label)
+    }
+}
+
+enum Setting {
+    Host,
+    Player,
+    Downloads,
+    Back,
+}
+
+impl fmt::Display for Setting {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let label = match self {
+            Setting::Host => "server host",
+            Setting::Player => "player command",
+            Setting::Downloads => "download folder",
+            Setting::Back => "back",
         };
         f.write_str(label)
     }
@@ -109,6 +130,7 @@ fn app() -> Result<()> {
         menu.push(Home::Random);
         menu.push(Home::Download);
         menu.push(Home::Account);
+        menu.push(Home::Settings);
         menu.push(Home::Quit);
 
         let result = match ui::select(&greeting, menu)? {
@@ -118,6 +140,11 @@ fn app() -> Result<()> {
             Some(Home::Random) => random(&api, &cfg, user.is_some()),
             Some(Home::Download) => download::flow(&api, &cfg),
             Some(Home::Account) => account(&mut api, &cfg, &mut user),
+            Some(Home::Settings) => {
+                let res = settings(&mut cfg);
+                api = Api::new(&cfg.host, config::session());
+                res
+            }
             Some(Home::Quit) | None => break,
         };
         if let Err(err) = result {
@@ -189,6 +216,32 @@ fn authenticate(api: &mut Api, cfg: &Config, user: &mut Option<String>, signup: 
         Err(err) => println!("{err}"),
     }
     sleep(Duration::from_millis(900));
+    Ok(())
+}
+
+fn settings(cfg: &mut Config) -> Result<()> {
+    loop {
+        ui::clear();
+        println!("server host:     {}", cfg.host);
+        println!("player command:  {}", cfg.player);
+        println!("download folder: {}\n", cfg.download_dir);
+        match ui::select("settings", vec![Setting::Host, Setting::Player, Setting::Downloads, Setting::Back])? {
+            Some(Setting::Host) => edit_field(&mut cfg.host, "server host (e.g. https://viel.tv)")?,
+            Some(Setting::Player) => edit_field(&mut cfg.player, "player command or full path")?,
+            Some(Setting::Downloads) => edit_field(&mut cfg.download_dir, "download folder")?,
+            Some(Setting::Back) | None => return Ok(()),
+        }
+        cfg.save()?;
+    }
+}
+
+fn edit_field(field: &mut String, prompt: &str) -> Result<()> {
+    if let Some(value) = ui::text(prompt)? {
+        let value = value.trim();
+        if !value.is_empty() {
+            *field = value.to_string();
+        }
+    }
     Ok(())
 }
 

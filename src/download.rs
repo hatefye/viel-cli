@@ -1,4 +1,4 @@
-use crate::api::{Api, Kind, Title};
+use crate::api::{AnimeProvider, Api, Kind, Title};
 use crate::config::Config;
 use crate::{deps, picker, ui};
 use anyhow::{bail, Context, Result};
@@ -6,11 +6,21 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-struct Target {
-    season: u32,
-    episode: u32,
-    name: String,
-    label: String,
+enum Category {
+    Movies,
+    Tv,
+    Anime,
+}
+
+impl fmt::Display for Category {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let label = match self {
+            Category::Movies => "movies",
+            Category::Tv => "tv shows",
+            Category::Anime => "anime",
+        };
+        f.write_str(label)
+    }
 }
 
 enum Scope {
@@ -26,74 +36,95 @@ impl fmt::Display for Scope {
             Scope::Episode => "one episode",
             Scope::Range => "a range of episodes",
             Scope::Season => "a whole season",
-            Scope::Everything => "every season",
+            Scope::Everything => "everything",
         };
         f.write_str(label)
     }
 }
 
+struct Job {
+    path: String,
+    label: String,
+    filename: String,
+    anime: bool,
+}
+
 pub fn flow(api: &Api, cfg: &Config) -> Result<()> {
     ui::clear();
-    let Some(query) = ui::text("search to download")? else {
+    let category = match ui::select("download what?", vec![Category::Movies, Category::Tv, Category::Anime])? {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+    ui::clear();
+    let Some(query) = ui::text("search")? else {
         return Ok(());
     };
     if query.trim().is_empty() {
         return Ok(());
     }
-    let results = api.search(query.trim())?;
-    if results.is_empty() {
-        println!("nothing found");
-        ui::pause();
-        return Ok(());
-    }
-    let Some(title) = picker::pick_title(api, "download", results)? else {
-        return Ok(());
-    };
 
-    let ffmpeg = match deps::resolve_ffmpeg() {
+    let ffmpeg = match ensure_ffmpeg() {
         Some(f) => f,
-        None => {
-            deps::install_tool("ffmpeg");
-            match deps::resolve_ffmpeg() {
-                Some(f) => f,
-                None => {
-                    println!("ffmpeg is required to download.");
-                    ui::pause();
-                    return Ok(());
-                }
-            }
-        }
+        None => return Ok(()),
     };
 
-    let targets = match collect_targets(api, &title)? {
-        Some(t) if !t.is_empty() => t,
+    let jobs = match category {
+        Category::Anime => anime_jobs(api, query.trim())?,
+        Category::Movies => media_jobs(api, query.trim(), Kind::Movie)?,
+        Category::Tv => media_jobs(api, query.trim(), Kind::Tv)?,
+    };
+    let jobs = match jobs {
+        Some(j) if !j.is_empty() => j,
         _ => return Ok(()),
     };
 
     let dir = PathBuf::from(&cfg.download_dir);
     std::fs::create_dir_all(&dir).ok();
     ui::clear();
-    println!("saving to {}", dir.display());
-    let total = targets.len();
-    for (i, target) in targets.iter().enumerate() {
-        println!("\n[{}/{}] {}", i + 1, total, target.label);
-        match download_one(api, &ffmpeg, &dir, &title, target) {
-            Ok(path) => println!("saved {}", path.display()),
-            Err(err) => println!("failed: {err}"),
+    println!("saving to {}\n", dir.display());
+    let total = jobs.len();
+    for (i, job) in jobs.iter().enumerate() {
+        println!("[{}/{}] {}", i + 1, total, job.label);
+        match run_ffmpeg(api, &ffmpeg, &dir, job) {
+            Ok(path) => println!("saved {}\n", path.display()),
+            Err(err) => println!("failed: {err}\n"),
         }
     }
-    println!("\ndone.");
+    println!("done.");
     ui::pause();
     Ok(())
 }
 
-fn collect_targets(api: &Api, title: &Title) -> Result<Option<Vec<Target>>> {
+fn ensure_ffmpeg() -> Option<String> {
+    if let Some(f) = deps::resolve_ffmpeg() {
+        return Some(f);
+    }
+    deps::install_tool("ffmpeg");
+    let found = deps::resolve_ffmpeg();
+    if found.is_none() {
+        println!("ffmpeg is required to download.");
+        ui::pause();
+    }
+    found
+}
+
+fn media_jobs(api: &Api, query: &str, kind: Kind) -> Result<Option<Vec<Job>>> {
+    let results: Vec<Title> = api.search(query)?.into_iter().filter(|t| t.kind == kind).collect();
+    if results.is_empty() {
+        println!("nothing found");
+        ui::pause();
+        return Ok(None);
+    }
+    let Some(title) = picker::pick_title(api, "download", results)? else {
+        return Ok(None);
+    };
+
     if title.kind == Kind::Movie {
-        return Ok(Some(vec![Target {
-            season: 0,
-            episode: 0,
-            name: title.name.clone(),
+        return Ok(Some(vec![Job {
+            path: title.id.to_string(),
             label: title.name.clone(),
+            filename: sanitize(&movie_name(&title)),
+            anime: false,
         }]));
     }
 
@@ -106,26 +137,22 @@ fn collect_targets(api: &Api, title: &Title) -> Result<Option<Vec<Target>>> {
         return Ok(None);
     }
 
+    let mut jobs = Vec::new();
     match scope {
         Scope::Everything => {
-            let mut out = Vec::new();
             for season in &seasons {
                 for ep in api.episodes(title.id, season.number)? {
-                    out.push(make_target(title, season.number, ep.number, &ep.name));
+                    jobs.push(tv_job(&title, season.number, ep.number, &ep.name));
                 }
             }
-            Ok(Some(out))
         }
         Scope::Season => {
             let Some(season) = ui::select("season", seasons)? else {
                 return Ok(None);
             };
-            let out = api
-                .episodes(title.id, season.number)?
-                .into_iter()
-                .map(|ep| make_target(title, season.number, ep.number, &ep.name))
-                .collect();
-            Ok(Some(out))
+            for ep in api.episodes(title.id, season.number)? {
+                jobs.push(tv_job(&title, season.number, ep.number, &ep.name));
+            }
         }
         Scope::Episode => {
             let Some(season) = ui::select("season", seasons)? else {
@@ -135,51 +162,120 @@ fn collect_targets(api: &Api, title: &Title) -> Result<Option<Vec<Target>>> {
             let Some(ep) = ui::select("episode", episodes)? else {
                 return Ok(None);
             };
-            Ok(Some(vec![make_target(title, season.number, ep.number, &ep.name)]))
+            jobs.push(tv_job(&title, season.number, ep.number, &ep.name));
         }
         Scope::Range => {
             let Some(season) = ui::select("season", seasons)? else {
                 return Ok(None);
             };
-            let episodes = api.episodes(title.id, season.number)?;
-            let Some(first) = ui::text("first episode number")? else {
-                return Ok(None);
+            let (lo, hi) = match ask_range()? {
+                Some(r) => r,
+                None => return Ok(None),
             };
-            let Some(last) = ui::text("last episode number")? else {
-                return Ok(None);
-            };
-            let lo: u32 = first.trim().parse().unwrap_or(0);
-            let hi: u32 = last.trim().parse().unwrap_or(0);
-            let out = episodes
-                .into_iter()
-                .filter(|ep| ep.number >= lo && ep.number <= hi)
-                .map(|ep| make_target(title, season.number, ep.number, &ep.name))
-                .collect();
-            Ok(Some(out))
+            for ep in api.episodes(title.id, season.number)? {
+                if ep.number >= lo && ep.number <= hi {
+                    jobs.push(tv_job(&title, season.number, ep.number, &ep.name));
+                }
+            }
         }
     }
+    Ok(Some(jobs))
 }
 
-fn make_target(title: &Title, season: u32, episode: u32, name: &str) -> Target {
-    Target {
-        season,
-        episode,
-        name: name.to_string(),
+fn anime_jobs(api: &Api, query: &str) -> Result<Option<Vec<Job>>> {
+    let results = api.anime_search(query)?;
+    if results.is_empty() {
+        println!("nothing found");
+        ui::pause();
+        return Ok(None);
+    }
+    let Some(title) = picker::pick_title(api, "download", results)? else {
+        return Ok(None);
+    };
+    let mut providers = api.anime_providers(title.id)?;
+    let has_sub = providers.iter().any(|p| !p.sub.is_empty());
+    let has_dub = providers.iter().any(|p| !p.dub.is_empty());
+    if !has_sub && !has_dub {
+        println!("no episodes found");
+        ui::pause();
+        return Ok(None);
+    }
+    let dub = if has_sub && has_dub {
+        match ui::select("audio", vec!["sub", "dub"])? {
+            Some(c) => c == "dub",
+            None => return Ok(None),
+        }
+    } else {
+        has_dub
+    };
+    let Some(idx) = providers.iter().position(|p: &AnimeProvider| if dub { !p.dub.is_empty() } else { !p.sub.is_empty() }) else {
+        return Ok(None);
+    };
+    let provider = providers.swap_remove(idx);
+    let episodes = if dub { provider.dub } else { provider.sub };
+
+    let scope = match ui::select("what to download", vec![Scope::Episode, Scope::Range, Scope::Everything])? {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    let selected: Vec<_> = match scope {
+        Scope::Everything => episodes,
+        Scope::Range => {
+            let (lo, hi) = match ask_range()? {
+                Some(r) => r,
+                None => return Ok(None),
+            };
+            episodes.into_iter().filter(|e| e.number as u32 >= lo && e.number as u32 <= hi).collect()
+        }
+        Scope::Episode | Scope::Season => {
+            let Some(ep) = ui::select("episode", episodes)? else {
+                return Ok(None);
+            };
+            vec![ep]
+        }
+    };
+
+    let jobs = selected
+        .into_iter()
+        .map(|ep| {
+            let num = ep.number as u32;
+            Job {
+                path: ep.id,
+                label: format!("{} E{num:02}", title.name),
+                filename: sanitize(&format!("{} E{num:02}.mkv", title.name)),
+                anime: true,
+            }
+        })
+        .collect();
+    Ok(Some(jobs))
+}
+
+fn ask_range() -> Result<Option<(u32, u32)>> {
+    let Some(first) = ui::text("first episode number")? else {
+        return Ok(None);
+    };
+    let Some(last) = ui::text("last episode number")? else {
+        return Ok(None);
+    };
+    Ok(Some((first.trim().parse().unwrap_or(0), last.trim().parse().unwrap_or(0))))
+}
+
+fn tv_job(title: &Title, season: u32, episode: u32, name: &str) -> Job {
+    Job {
+        path: format!("{}/{}/{}", title.id, season, episode),
         label: format!("{} S{season:02}E{episode:02} · {name}", title.name),
+        filename: sanitize(&format!("{} S{season:02}E{episode:02} {name}.mkv", title.name)),
+        anime: false,
     }
 }
 
-fn download_one(api: &Api, ffmpeg: &str, dir: &Path, title: &Title, target: &Target) -> Result<PathBuf> {
-    let (path, label) = if target.season == 0 {
-        (title.id.to_string(), title.name.clone())
+fn run_ffmpeg(api: &Api, ffmpeg: &str, dir: &Path, job: &Job) -> Result<PathBuf> {
+    let stream = if job.anime {
+        api.anime_stream(&job.path, &job.label)?
     } else {
-        (
-            format!("{}/{}/{}", title.id, target.season, target.episode),
-            target.label.clone(),
-        )
+        api.resolve(&job.path, &job.label, None)?
     };
-    let stream = api.resolve(&path, &label, None)?;
-    let out = dir.join(filename(title, target));
+    let out = dir.join(&job.filename);
     let status = Command::new(ffmpeg)
         .args([
             "-y",
@@ -201,18 +297,12 @@ fn download_one(api: &Api, ffmpeg: &str, dir: &Path, title: &Title, target: &Tar
     Ok(out)
 }
 
-fn filename(title: &Title, target: &Target) -> String {
-    let raw = if target.season == 0 {
-        let year = if title.year.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", title.year)
-        };
-        format!("{}{year}.mkv", title.name)
+fn movie_name(title: &Title) -> String {
+    if title.year.is_empty() {
+        format!("{}.mkv", title.name)
     } else {
-        format!("{} S{:02}E{:02} {}.mkv", title.name, target.season, target.episode, target.name)
-    };
-    sanitize(&raw)
+        format!("{} ({}).mkv", title.name, title.year)
+    }
 }
 
 fn sanitize(name: &str) -> String {

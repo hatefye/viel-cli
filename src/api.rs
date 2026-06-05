@@ -222,7 +222,7 @@ impl Api {
     }
 
     pub fn poster(&self, poster_path: &str) -> Option<Vec<u8>> {
-        let resp = if poster_path.starts_with('/') {
+        let resp = if poster_path.starts_with("/proxy") {
             // already a proxied path (anilist covers come back like /proxy/image?url=...)
             self.client.get(format!("{}{}", self.host, poster_path)).send().ok()?
         } else if poster_path.starts_with("http") {
