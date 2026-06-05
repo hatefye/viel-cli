@@ -51,16 +51,16 @@ fn main() -> Result<()> {
     let cfg = Config::load()?;
     let mut api = Api::new(&cfg.host, config::session());
 
-    ui::clear();
     let report = deps::check(&api, &cfg.player);
     if !report.player {
-        println!("{} is needed to play video and was not found on your PATH.", cfg.player);
-        if ui::confirm("open the install page?")? {
-            deps::open_install_page();
-        }
+        ui::clear();
+        deps::install_mpv(&cfg.player);
+        sleep(Duration::from_millis(700));
     }
     if !report.host {
+        ui::clear();
         println!("could not reach {}. check your connection or VIEL_HOST.", cfg.host);
+        sleep(Duration::from_millis(1200));
     }
 
     let mut user = api.me().unwrap_or(None);
