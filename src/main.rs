@@ -59,6 +59,9 @@ fn main() -> Result<()> {
             deps::install_mpv(&cfg.player);
             found = deps::resolve_player(&cfg.player);
         }
+        if found.is_none() {
+            found = deps::prompt_player_path();
+        }
         match found {
             Some(path) => {
                 if path != cfg.player {

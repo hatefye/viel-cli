@@ -93,6 +93,34 @@ pub fn install_mpv(player: &str) -> bool {
     true
 }
 
+pub fn prompt_player_path() -> Option<String> {
+    println!("couldn't find mpv automatically.");
+    loop {
+        let entered = match ui::text("paste the full path to mpv (blank to skip)") {
+            Ok(Some(s)) => s,
+            _ => return None,
+        };
+        let raw = entered.trim().trim_matches('"');
+        if raw.is_empty() {
+            return None;
+        }
+        let candidate = normalize_player_path(raw);
+        if has_player(&candidate) {
+            return Some(candidate);
+        }
+        println!("that didn't run as mpv — check the path and try again.");
+    }
+}
+
+fn normalize_player_path(input: &str) -> String {
+    let path = std::path::Path::new(input);
+    if path.is_dir() {
+        let exe = if cfg!(windows) { "mpv.exe" } else { "mpv" };
+        return path.join(exe).display().to_string();
+    }
+    input.to_string()
+}
+
 pub fn open_install_page() {
     let url = "https://mpv.io/installation/";
     #[cfg(target_os = "macos")]
@@ -190,18 +218,22 @@ pub fn resolve_player(player: &str) -> Option<String> {
     {
         use std::path::PathBuf;
         let mut roots: Vec<(PathBuf, bool)> = Vec::new();
+        if let Ok(pf) = std::env::var("ProgramFiles") {
+            roots.push((PathBuf::from(pf), true));
+        }
+        if let Ok(pfx) = std::env::var("ProgramFiles(x86)") {
+            roots.push((PathBuf::from(pfx), true));
+        }
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
             roots.push((PathBuf::from(&local).join("Microsoft\\WinGet\\Packages"), true));
-            roots.push((PathBuf::from(&local).join("Programs\\mpv"), false));
+            roots.push((PathBuf::from(&local).join("Microsoft\\WinGet\\Links"), false));
+            roots.push((PathBuf::from(&local).join("Programs"), true));
         }
         if let Ok(home) = std::env::var("USERPROFILE") {
             roots.push((PathBuf::from(&home).join("scoop\\apps\\mpv\\current"), false));
             roots.push((PathBuf::from(&home).join("scoop\\shims"), false));
         }
         roots.push((PathBuf::from("C:\\ProgramData\\chocolatey\\bin"), false));
-        if let Ok(pf) = std::env::var("ProgramFiles") {
-            roots.push((PathBuf::from(pf).join("mpv"), false));
-        }
         for (root, filter_mpv) in roots {
             if let Some(found) = search_root(&root, filter_mpv) {
                 return Some(found);
