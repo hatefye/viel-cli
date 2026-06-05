@@ -46,7 +46,14 @@ impl fmt::Display for Account {
     }
 }
 
-fn main() -> Result<()> {
+fn main() {
+    if let Err(err) = app() {
+        eprintln!("\nerror: {err}");
+        ui::pause();
+    }
+}
+
+fn app() -> Result<()> {
     ui::theme();
     let mut cfg = Config::load()?;
     let mut api = Api::new(&cfg.host, config::session());
@@ -98,12 +105,17 @@ fn main() -> Result<()> {
         menu.push(Home::Account);
         menu.push(Home::Quit);
 
-        match ui::select(&greeting, menu)? {
-            Some(Home::Continue) => resume(&api, &cfg)?,
-            Some(Home::Search) => browse(&api, &cfg, user.is_some())?,
-            Some(Home::Random) => random(&api, &cfg, user.is_some())?,
-            Some(Home::Account) => account(&mut api, &cfg, &mut user)?,
+        let result = match ui::select(&greeting, menu)? {
+            Some(Home::Continue) => resume(&api, &cfg),
+            Some(Home::Search) => browse(&api, &cfg, user.is_some()),
+            Some(Home::Random) => random(&api, &cfg, user.is_some()),
+            Some(Home::Account) => account(&mut api, &cfg, &mut user),
             Some(Home::Quit) | None => break,
+        };
+        if let Err(err) = result {
+            ui::clear();
+            println!("something went wrong:\n  {err}");
+            ui::pause();
         }
     }
     Ok(())

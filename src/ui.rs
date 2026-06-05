@@ -53,6 +53,14 @@ pub fn confirm(prompt: &str) -> Result<bool> {
     Ok(soft(Confirm::new(prompt).with_default(true).prompt())?.unwrap_or(false))
 }
 
+pub fn pause() {
+    use std::io::{stdin, stdout, Write};
+    print!("\npress enter to continue ");
+    let _ = stdout().flush();
+    let mut line = String::new();
+    let _ = stdin().read_line(&mut line);
+}
+
 pub fn poster(bytes: &[u8]) {
     let Ok(image) = image::load_from_memory(bytes) else {
         return;
