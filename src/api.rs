@@ -191,17 +191,27 @@ impl Api {
                 Ok(b) => b,
                 Err(_) => continue,
             };
-            if let Some(stream_url) = body.m3u8.or(body.mp4) {
-                let referer = body
-                    .headers
-                    .and_then(|h| h.get("Referer").or_else(|| h.get("referer")).cloned());
-                return Ok(Stream {
-                    url: stream_url,
-                    referer,
-                    title: title.to_string(),
-                    start,
-                });
+            let referer = body
+                .headers
+                .and_then(|h| h.get("Referer").or_else(|| h.get("referer")).cloned());
+            let (raw, endpoint) = if let Some(m) = body.m3u8 {
+                (m, "manifest")
+            } else if let Some(m) = body.mp4 {
+                (m, "segment")
+            } else {
+                continue;
+            };
+            let mut proxied = format!("{}/proxy/{}?url={}", self.host, endpoint, urlencoding::encode(&raw));
+            if let Some(referer) = &referer {
+                proxied.push_str("&ref=");
+                proxied.push_str(&urlencoding::encode(referer));
             }
+            return Ok(Stream {
+                url: proxied,
+                referer: None,
+                title: title.to_string(),
+                start,
+            });
         }
         Err(anyhow!("no playable source found"))
     }
