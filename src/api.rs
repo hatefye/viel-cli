@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use reqwest::blocking::{Client, RequestBuilder};
-use reqwest::header::{COOKIE, SET_COOKIE};
+use reqwest::header::{COOKIE, RANGE, SET_COOKIE};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -206,12 +206,14 @@ impl Api {
                 proxied.push_str("&ref=");
                 proxied.push_str(&urlencoding::encode(referer));
             }
-            return Ok(Stream {
-                url: proxied,
-                referer: None,
-                title: title.to_string(),
-                start,
-            });
+            if endpoint == "segment" || self.playable(&proxied) {
+                return Ok(Stream {
+                    url: proxied,
+                    referer: None,
+                    title: title.to_string(),
+                    start,
+                });
+            }
         }
         Err(anyhow!("no playable source found"))
     }
@@ -234,6 +236,57 @@ impl Api {
             bail!("sign up failed (username may be taken, or the password is too short)");
         }
         token_from(&resp)
+    }
+
+    fn playable(&self, master_url: &str) -> bool {
+        let master = match self.client.get(master_url).send().and_then(|r| r.text()) {
+            Ok(t) => t,
+            Err(_) => return false,
+        };
+        if !master.contains("#EXTM3U") {
+            return false;
+        }
+        let child = match first_uri(&master) {
+            Some(c) => self.absolute(&c),
+            None => return false,
+        };
+        if child.contains("/proxy/manifest") {
+            let media = match self.client.get(&child).send().and_then(|r| r.text()) {
+                Ok(t) => t,
+                Err(_) => return false,
+            };
+            match first_uri(&media) {
+                Some(s) => self.segment_ok(&self.absolute(&s)),
+                None => false,
+            }
+        } else {
+            self.segment_ok(&child)
+        }
+    }
+
+    fn segment_ok(&self, url: &str) -> bool {
+        let resp = match self.client.get(url).header(RANGE, "bytes=0-1024").send() {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        if !resp.status().is_success() {
+            return false;
+        }
+        match resp.bytes() {
+            Ok(bytes) => looks_like_video(&bytes),
+            Err(_) => false,
+        }
+    }
+
+    fn absolute(&self, line: &str) -> String {
+        let line = line.trim();
+        if line.starts_with("http") {
+            line.to_string()
+        } else if line.starts_with('/') {
+            format!("{}{}", self.host, line)
+        } else {
+            format!("{}/{}", self.host, line)
+        }
     }
 
     pub fn login(&self, username: &str, password: &str) -> Result<String> {
@@ -368,6 +421,28 @@ pub struct HistoryEntry {
     pub position: f64,
     pub duration: f64,
     pub title: Option<String>,
+}
+
+fn first_uri(playlist: &str) -> Option<String> {
+    playlist
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(str::to_string)
+}
+
+fn looks_like_video(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    if bytes.starts_with(b"\x89PNG")
+        || bytes.starts_with(b"GIF8")
+        || bytes.starts_with(&[0xFF, 0xD8])
+        || bytes.first() == Some(&b'<')
+    {
+        return false;
+    }
+    true
 }
 
 fn remaining(seconds: f64) -> String {
