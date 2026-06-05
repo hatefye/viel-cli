@@ -48,14 +48,27 @@ impl fmt::Display for Account {
 
 fn main() -> Result<()> {
     ui::theme();
-    let cfg = Config::load()?;
+    let mut cfg = Config::load()?;
     let mut api = Api::new(&cfg.host, config::session());
 
     let report = deps::check(&api, &cfg.player);
     if !report.player {
         ui::clear();
-        deps::install_mpv(&cfg.player);
-        sleep(Duration::from_millis(700));
+        let mut found = deps::resolve_player(&cfg.player);
+        if found.is_none() {
+            deps::install_mpv(&cfg.player);
+            found = deps::resolve_player(&cfg.player);
+        }
+        match found {
+            Some(path) => {
+                if path != cfg.player {
+                    println!("using mpv at {path}");
+                    cfg.player = path;
+                    let _ = cfg.save();
+                }
+            }
+            None => sleep(Duration::from_millis(700)),
+        }
     }
     if !report.host {
         ui::clear();

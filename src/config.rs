@@ -35,6 +35,14 @@ impl Config {
         let raw = fs::read_to_string(dir()?.join("config.toml")).ok()?;
         toml::from_str(&raw).ok()
     }
+
+    pub fn save(&self) -> Result<()> {
+        if let Some(dir) = dir() {
+            fs::create_dir_all(&dir)?;
+            fs::write(dir.join("config.toml"), toml::to_string(self)?)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn session() -> Option<String> {

@@ -174,6 +174,92 @@ fn build(program: &str, args: &[&str], sudo: bool) -> Plan {
     }
 }
 
+pub fn resolve_player(player: &str) -> Option<String> {
+    if has_player(player) {
+        return Some(player.to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        for candidate in ["/opt/homebrew/bin/mpv", "/usr/local/bin/mpv"] {
+            if has_player(candidate) {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::path::PathBuf;
+        let mut roots: Vec<(PathBuf, bool)> = Vec::new();
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            roots.push((PathBuf::from(&local).join("Microsoft\\WinGet\\Packages"), true));
+            roots.push((PathBuf::from(&local).join("Programs\\mpv"), false));
+        }
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            roots.push((PathBuf::from(&home).join("scoop\\apps\\mpv\\current"), false));
+            roots.push((PathBuf::from(&home).join("scoop\\shims"), false));
+        }
+        roots.push((PathBuf::from("C:\\ProgramData\\chocolatey\\bin"), false));
+        if let Ok(pf) = std::env::var("ProgramFiles") {
+            roots.push((PathBuf::from(pf).join("mpv"), false));
+        }
+        for (root, filter_mpv) in roots {
+            if let Some(found) = search_root(&root, filter_mpv) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn search_root(root: &std::path::Path, filter_mpv: bool) -> Option<String> {
+    let direct = root.join("mpv.exe");
+    if direct.is_file() {
+        let path = direct.display().to_string();
+        if has_player(&path) {
+            return Some(path);
+        }
+    }
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        if filter_mpv {
+            let name = dir.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+            if !name.contains("mpv") {
+                continue;
+            }
+        }
+        if let Some(found) = find_exe(&dir, 2) {
+            if has_player(&found) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn find_exe(dir: &std::path::Path, depth: u8) -> Option<String> {
+    let direct = dir.join("mpv.exe");
+    if direct.is_file() {
+        return Some(direct.display().to_string());
+    }
+    if depth == 0 {
+        return None;
+    }
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(found) = find_exe(&path, depth - 1) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
 fn which(bin: &str) -> bool {
     Command::new(bin)
         .arg("--version")
