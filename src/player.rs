@@ -29,13 +29,28 @@ fn base(player: &str, stream: &Stream) -> Command {
 
 #[cfg(not(unix))]
 fn blocking(player: &str, stream: &Stream) -> Result<()> {
-    let status = base(player, stream)
-        .status()
-        .with_context(|| format!("could not launch {player}; install it and ensure it is on PATH"))?;
-    if !status.success() {
-        anyhow::bail!("{player} exited with an error");
+    use std::process::Stdio;
+    let output = base(player, stream)
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("could not launch {player}; install it and ensure it is on PATH"))?
+        .wait_with_output()
+        .with_context(|| format!("{player} failed to run"))?;
+    if !output.status.success() {
+        let detail = tail_lines(&String::from_utf8_lossy(&output.stderr), 20);
+        if detail.is_empty() {
+            anyhow::bail!("{player} exited with an error (no output)");
+        }
+        anyhow::bail!("{player} error:\n{detail}");
     }
     Ok(())
+}
+
+#[cfg(not(unix))]
+fn tail_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let start = lines.len().saturating_sub(n);
+    lines[start..].iter().map(|l| format!("  {l}")).collect::<Vec<_>>().join("\n")
 }
 
 #[cfg(unix)]
