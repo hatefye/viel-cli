@@ -10,6 +10,10 @@ pub struct Config {
     pub player: String,
     #[serde(default = "default_download_dir")]
     pub download_dir: String,
+    #[serde(default = "default_subtitle_lang")]
+    pub subtitle_lang: String,
+    #[serde(default = "default_audio")]
+    pub audio: String,
 }
 
 impl Default for Config {
@@ -18,8 +22,18 @@ impl Default for Config {
             host: "https://viel.tv".into(),
             player: "mpv".into(),
             download_dir: default_download_dir(),
+            subtitle_lang: default_subtitle_lang(),
+            audio: default_audio(),
         }
     }
+}
+
+fn default_subtitle_lang() -> String {
+    "en".into()
+}
+
+fn default_audio() -> String {
+    "sub".into()
 }
 
 fn default_download_dir() -> String {

@@ -37,6 +37,8 @@ enum Setting {
     Host,
     Player,
     Downloads,
+    Subtitle,
+    Audio,
     Back,
 }
 
@@ -46,6 +48,8 @@ impl fmt::Display for Setting {
             Setting::Host => "server host",
             Setting::Player => "player command",
             Setting::Downloads => "download folder",
+            Setting::Subtitle => "default subtitle language",
+            Setting::Audio => "default anime audio (sub/dub)",
             Setting::Back => "back",
         };
         f.write_str(label)
@@ -222,13 +226,29 @@ fn authenticate(api: &mut Api, cfg: &Config, user: &mut Option<String>, signup: 
 fn settings(cfg: &mut Config) -> Result<()> {
     loop {
         ui::clear();
-        println!("server host:     {}", cfg.host);
-        println!("player command:  {}", cfg.player);
-        println!("download folder: {}\n", cfg.download_dir);
-        match ui::select("settings", vec![Setting::Host, Setting::Player, Setting::Downloads, Setting::Back])? {
+        println!("server host:       {}", cfg.host);
+        println!("player command:    {}", cfg.player);
+        println!("download folder:   {}", cfg.download_dir);
+        println!("subtitle language: {}", cfg.subtitle_lang);
+        println!("anime audio:       {}\n", cfg.audio);
+        let options = vec![
+            Setting::Host,
+            Setting::Player,
+            Setting::Downloads,
+            Setting::Subtitle,
+            Setting::Audio,
+            Setting::Back,
+        ];
+        match ui::select("settings", options)? {
             Some(Setting::Host) => edit_field(&mut cfg.host, "server host (e.g. https://viel.tv)")?,
             Some(Setting::Player) => edit_field(&mut cfg.player, "player command or full path")?,
             Some(Setting::Downloads) => edit_field(&mut cfg.download_dir, "download folder")?,
+            Some(Setting::Subtitle) => edit_field(&mut cfg.subtitle_lang, "subtitle language code (e.g. en, es, ja)")?,
+            Some(Setting::Audio) => {
+                if let Some(choice) = ui::select("default anime audio", vec!["sub", "dub"])? {
+                    cfg.audio = choice.to_string();
+                }
+            }
             Some(Setting::Back) | None => return Ok(()),
         }
         cfg.save()?;
@@ -303,11 +323,11 @@ fn anime_flow(api: &Api, cfg: &Config, title: &Title) -> Result<()> {
         ui::pause();
         return Ok(());
     }
-    let dub = if has_sub && has_dub {
-        match ui::select("audio", vec!["sub", "dub"])? {
-            Some(c) => c == "dub",
-            None => return Ok(()),
-        }
+    let want_dub = cfg.audio.eq_ignore_ascii_case("dub");
+    let dub = if want_dub && has_dub {
+        true
+    } else if !want_dub && has_sub {
+        false
     } else {
         has_dub
     };
@@ -399,8 +419,40 @@ fn detail(title: &Title) {
 }
 
 fn play_movie(api: &Api, cfg: &Config, logged_in: bool, title: &Title, start: Option<f64>) -> Result<()> {
-    let stream = api.resolve(&title.id.to_string(), &title.name, start)?;
+    let id = title.id.to_string();
+    let mut stream = api.resolve(&id, &title.name, start)?;
+    attach_subs(api, cfg, &mut stream, &id);
     run(api, cfg, logged_in, "movie", title.id, &title.name, 0, 0, &stream)
+}
+
+fn attach_subs(api: &Api, cfg: &Config, stream: &mut viel::api::Stream, path: &str) {
+    let mut subs = api.subtitles(path);
+    let pref = cfg.subtitle_lang.to_lowercase();
+    subs.sort_by_key(|s| !lang_matches(&s.lang, &pref));
+    subs.truncate(10);
+    stream.subs = subs;
+}
+
+fn lang_matches(lang: &str, pref: &str) -> bool {
+    let l = lang.to_lowercase();
+    if l.starts_with(pref) {
+        return true;
+    }
+    let name = match pref {
+        "en" => "english",
+        "es" => "spanish",
+        "fr" => "french",
+        "pt" => "portuguese",
+        "de" => "german",
+        "ja" => "japanese",
+        "ar" => "arabic",
+        "it" => "italian",
+        "ru" => "russian",
+        "ko" => "korean",
+        "zh" => "chinese",
+        _ => "",
+    };
+    !name.is_empty() && l.starts_with(name)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -420,7 +472,8 @@ fn play_episode(
     } else {
         format!("{} · S{season}E{episode} · {episode_name}", title.name)
     };
-    let stream = api.resolve(&path, &label, start)?;
+    let mut stream = api.resolve(&path, &label, start)?;
+    attach_subs(api, cfg, &mut stream, &path);
     run(api, cfg, logged_in, "tv", title.id, &title.name, season, episode, &stream)
 }
 

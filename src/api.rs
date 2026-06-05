@@ -85,6 +85,12 @@ pub struct Stream {
     pub referer: Option<String>,
     pub title: String,
     pub start: Option<f64>,
+    pub subs: Vec<Subtitle>,
+}
+
+pub struct Subtitle {
+    pub url: String,
+    pub lang: String,
 }
 
 pub struct ContinueRow {
@@ -215,6 +221,7 @@ impl Api {
                     referer: None,
                     title: title.to_string(),
                     start,
+                    subs: Vec::new(),
                 });
             }
         }
@@ -283,7 +290,27 @@ impl Api {
             proxied.push_str("&ref=");
             proxied.push_str(&urlencoding::encode(referer));
         }
-        Ok(Stream { url: proxied, referer: None, title: title.to_string(), start: None })
+        Ok(Stream { url: proxied, referer: None, title: title.to_string(), start: None, subs: Vec::new() })
+    }
+
+    pub fn subtitles(&self, path: &str) -> Vec<Subtitle> {
+        let url = format!("{}/proxy/videasy-subs/{}", self.host, path);
+        let resp = match self.client.get(url).send() {
+            Ok(r) if r.status().is_success() => r,
+            _ => return Vec::new(),
+        };
+        let body: SubsResp = match resp.json() {
+            Ok(b) => b,
+            Err(_) => return Vec::new(),
+        };
+        body.subtitles
+            .into_iter()
+            .filter(|s| !s.file.is_empty())
+            .map(|s| Subtitle {
+                url: format!("{}/proxy/subtitle?url={}", self.host, urlencoding::encode(&s.file)),
+                lang: s.lang.or(s.label).unwrap_or_default(),
+            })
+            .collect()
     }
 
     pub fn register(&self, username: &str, password: &str) -> Result<String> {
@@ -724,4 +751,17 @@ struct AnimeStreamRaw {
     kind: String,
     referer: Option<String>,
     priority: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct SubsResp {
+    #[serde(default)]
+    subtitles: Vec<SubRaw>,
+}
+
+#[derive(Deserialize)]
+struct SubRaw {
+    file: String,
+    lang: Option<String>,
+    label: Option<String>,
 }
