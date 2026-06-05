@@ -8,6 +8,8 @@ use std::path::PathBuf;
 pub struct Config {
     pub host: String,
     pub player: String,
+    #[serde(default = "default_download_dir")]
+    pub download_dir: String,
 }
 
 impl Default for Config {
@@ -15,8 +17,16 @@ impl Default for Config {
         Self {
             host: "https://viel.tv".into(),
             player: "mpv".into(),
+            download_dir: default_download_dir(),
         }
     }
+}
+
+fn default_download_dir() -> String {
+    directories::UserDirs::new()
+        .and_then(|u| u.video_dir().map(|v| v.join("viel")))
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "viel-downloads".into())
 }
 
 impl Config {

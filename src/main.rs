@@ -4,12 +4,13 @@ use std::thread::sleep;
 use std::time::Duration;
 use viel::api::{Api, Kind, ProgressUpdate, Title};
 use viel::config::{self, Config};
-use viel::{deps, player, ui};
+use viel::{deps, download, player, ui};
 
 enum Home {
     Continue,
     Search,
     Random,
+    Download,
     Account,
     Quit,
 }
@@ -20,6 +21,7 @@ impl fmt::Display for Home {
             Home::Continue => "continue",
             Home::Search => "search",
             Home::Random => "random",
+            Home::Download => "download",
             Home::Account => "account",
             Home::Quit => "quit",
         };
@@ -63,7 +65,7 @@ fn app() -> Result<()> {
         ui::clear();
         let mut found = deps::resolve_player(&cfg.player);
         if found.is_none() {
-            deps::install_mpv(&cfg.player);
+            deps::install_tool("mpv");
             found = deps::resolve_player(&cfg.player);
         }
         if found.is_none() {
@@ -102,6 +104,7 @@ fn app() -> Result<()> {
         }
         menu.push(Home::Search);
         menu.push(Home::Random);
+        menu.push(Home::Download);
         menu.push(Home::Account);
         menu.push(Home::Quit);
 
@@ -109,6 +112,7 @@ fn app() -> Result<()> {
             Some(Home::Continue) => resume(&api, &cfg),
             Some(Home::Search) => browse(&api, &cfg, user.is_some()),
             Some(Home::Random) => random(&api, &cfg, user.is_some()),
+            Some(Home::Download) => download::flow(&api, &cfg),
             Some(Home::Account) => account(&mut api, &cfg, &mut user),
             Some(Home::Quit) | None => break,
         };

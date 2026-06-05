@@ -18,6 +18,7 @@ fn base(player: &str, stream: &Stream) -> Command {
     cmd.arg(&stream.url);
     cmd.arg(format!("--force-media-title={}", stream.title));
     cmd.arg("--force-window=yes");
+    cmd.arg("--hls-bitrate=max");
     if let Some(referer) = &stream.referer {
         cmd.arg(format!("--http-header-fields=Referer: {referer}"));
     }

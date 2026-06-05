@@ -14,9 +14,6 @@ const PENDING: u8 = 0;
 const OK: u8 = 1;
 const FAIL: u8 = 2;
 
-#[cfg(target_os = "windows")]
-const SCOOP_CMD: &str = "if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) { Invoke-RestMethod get.scoop.sh | Invoke-Expression }; scoop install git; scoop bucket add extras; scoop install mpv";
-
 pub struct Report {
     pub player: bool,
     pub host: bool,
@@ -34,7 +31,7 @@ pub fn check(api: &Api, player: &str) -> Report {
 
     thread::scope(|scope| {
         scope.spawn(|| {
-            let ok = has_player(player);
+            let ok = has(player);
             player_state.store(if ok { OK } else { FAIL }, Ordering::SeqCst);
         });
         scope.spawn(|| {
@@ -66,15 +63,15 @@ pub fn check(api: &Api, player: &str) -> Report {
     }
 }
 
-pub fn install_mpv(player: &str) -> bool {
-    let Some(plan) = plan() else {
-        println!("no supported package manager was found.");
-        if ui::confirm("open the mpv install page?").unwrap_or(false) {
+pub fn install_tool(tool: &str) -> bool {
+    let Some(plan) = plan(tool) else {
+        println!("no supported package manager was found. install {tool} manually.");
+        if tool == "mpv" && ui::confirm("open the mpv install page?").unwrap_or(false) {
             open_install_page();
         }
         return false;
     };
-    println!("mpv is needed to play video and was not found.");
+    println!("{tool} is needed and was not found.");
     if !ui::confirm(&format!("install it now with `{}`?", plan.pretty)).unwrap_or(false) {
         return false;
     }
@@ -85,13 +82,13 @@ pub fn install_mpv(player: &str) -> bool {
         .map(|s| s.success())
         .unwrap_or(false);
     if !ran {
-        println!("\ninstall did not complete. see https://mpv.io/installation/");
+        println!("\ninstall did not complete.");
         return false;
     }
-    if has_player(player) {
-        println!("\nmpv installed.");
+    if has(tool) {
+        println!("\n{tool} installed.");
     } else {
-        println!("\nmpv installed. restart your terminal so it lands on PATH, then run viel again.");
+        println!("\n{tool} installed. restart your terminal so it lands on PATH, then run viel again.");
     }
     true
 }
@@ -108,7 +105,7 @@ pub fn prompt_player_path() -> Option<String> {
             return None;
         }
         let candidate = normalize_player_path(raw);
-        if has_player(&candidate) {
+        if has(&candidate) {
             return Some(candidate);
         }
         println!("that didn't run as mpv — check the path and try again.");
@@ -140,38 +137,46 @@ struct Plan {
     pretty: String,
 }
 
-fn plan() -> Option<Plan> {
+fn plan(tool: &str) -> Option<Plan> {
     #[cfg(target_os = "macos")]
     {
-        if which("brew") {
-            return Some(build("brew", &["install", "mpv"], false, None));
+        if has("brew") {
+            return Some(build("brew", &["install", tool], false, None));
         }
     }
     #[cfg(target_os = "windows")]
     {
-        return Some(build(
-            "powershell",
-            &["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", SCOOP_CMD],
-            false,
-            Some("scoop install mpv (sets up scoop if needed)"),
-        ));
+        let cmd = format!(
+            "if (-not (Get-Command scoop -ErrorAction SilentlyContinue)) {{ Invoke-RestMethod get.scoop.sh | Invoke-Expression }}; scoop install git; scoop bucket add extras; scoop install {tool}"
+        );
+        return Some(Plan {
+            program: "powershell".into(),
+            args: vec![
+                "-NoProfile".into(),
+                "-ExecutionPolicy".into(),
+                "Bypass".into(),
+                "-Command".into(),
+                cmd,
+            ],
+            pretty: format!("scoop install {tool} (sets up scoop if needed)"),
+        });
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
-        if which("apt-get") {
-            return Some(build("apt-get", &["install", "-y", "mpv"], true, None));
+        if has("apt-get") {
+            return Some(build("apt-get", &["install", "-y", tool], true, None));
         }
-        if which("dnf") {
-            return Some(build("dnf", &["install", "-y", "mpv"], true, None));
+        if has("dnf") {
+            return Some(build("dnf", &["install", "-y", tool], true, None));
         }
-        if which("pacman") {
-            return Some(build("pacman", &["-S", "--noconfirm", "mpv"], true, None));
+        if has("pacman") {
+            return Some(build("pacman", &["-S", "--noconfirm", tool], true, None));
         }
-        if which("zypper") {
-            return Some(build("zypper", &["install", "-y", "mpv"], true, None));
+        if has("zypper") {
+            return Some(build("zypper", &["install", "-y", tool], true, None));
         }
-        if which("apk") {
-            return Some(build("apk", &["add", "mpv"], true, None));
+        if has("apk") {
+            return Some(build("apk", &["add", tool], true, None));
         }
     }
     #[allow(unreachable_code)]
@@ -180,6 +185,7 @@ fn plan() -> Option<Plan> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn build(program: &str, args: &[&str], sudo: bool, pretty: Option<&str>) -> Plan {
     let pretty = pretty.map(str::to_string).unwrap_or_else(|| {
         format!("{}{} {}", if sudo { "sudo " } else { "" }, program, args.join(" "))
@@ -193,14 +199,42 @@ fn build(program: &str, args: &[&str], sudo: bool, pretty: Option<&str>) -> Plan
     }
 }
 
+pub fn resolve_ffmpeg() -> Option<String> {
+    if has("ffmpeg") {
+        return Some("ffmpeg".to_string());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        for candidate in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"] {
+            if has(candidate) {
+                return Some(candidate.to_string());
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            for c in [
+                format!("{home}\\scoop\\shims\\ffmpeg.exe"),
+                format!("{home}\\scoop\\apps\\ffmpeg\\current\\bin\\ffmpeg.exe"),
+            ] {
+                if has(&c) {
+                    return Some(c);
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn resolve_player(player: &str) -> Option<String> {
-    if has_player(player) {
+    if has(player) {
         return Some(player.to_string());
     }
     #[cfg(target_os = "macos")]
     {
         for candidate in ["/opt/homebrew/bin/mpv", "/usr/local/bin/mpv"] {
-            if has_player(candidate) {
+            if has(candidate) {
                 return Some(candidate.to_string());
             }
         }
@@ -239,7 +273,7 @@ fn search_root(root: &std::path::Path, filter_mpv: bool) -> Option<String> {
     let direct = root.join("mpv.exe");
     if direct.is_file() {
         let path = direct.display().to_string();
-        if has_player(&path) {
+        if has(&path) {
             return Some(path);
         }
     }
@@ -255,7 +289,7 @@ fn search_root(root: &std::path::Path, filter_mpv: bool) -> Option<String> {
             }
         }
         if let Some(found) = find_exe(&dir, 2) {
-            if has_player(&found) {
+            if has(&found) {
                 return Some(found);
             }
         }
@@ -283,19 +317,8 @@ fn find_exe(dir: &std::path::Path, depth: u8) -> Option<String> {
     None
 }
 
-#[cfg(unix)]
-fn which(bin: &str) -> bool {
+fn has(bin: &str) -> bool {
     Command::new(bin)
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn has_player(player: &str) -> bool {
-    Command::new(player)
         .arg("--version")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
