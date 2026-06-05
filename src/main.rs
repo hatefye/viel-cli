@@ -115,6 +115,17 @@ fn app() -> Result<()> {
         if let Err(err) = result {
             ui::clear();
             println!("something went wrong:\n  {err}");
+            let message = err.to_string();
+            if message.contains("exited") || message.contains("launch") {
+                println!("\nthat usually means the configured player isn't real mpv or can't run.");
+                if ui::confirm("point viel at a different mpv?").unwrap_or(false) {
+                    if let Some(path) = deps::prompt_player_path() {
+                        cfg.player = path;
+                        let _ = cfg.save();
+                        println!("saved.");
+                    }
+                }
+            }
             ui::pause();
         }
     }
