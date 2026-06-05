@@ -13,6 +13,7 @@ const SOURCES: [&str; 4] = ["vidrock", "vidzee", "videasy", "anyembed"];
 pub enum Kind {
     Movie,
     Tv,
+    Anime,
 }
 
 impl Kind {
@@ -20,6 +21,7 @@ impl Kind {
         match self {
             Kind::Movie => "movie",
             Kind::Tv => "tv",
+            Kind::Anime => "anime",
         }
     }
 }
@@ -106,6 +108,7 @@ impl fmt::Display for ContinueRow {
         let left = remaining(self.duration - self.position);
         match self.kind {
             Kind::Tv => write!(f, "{} · S{}E{} · {} left", self.show, self.season, self.episode, left),
+            Kind::Anime => write!(f, "{} · E{} · {} left", self.show, self.episode, left),
             Kind::Movie => write!(f, "{} · {} left", self.show, left),
         }
     }
@@ -219,13 +222,68 @@ impl Api {
     }
 
     pub fn poster(&self, poster_path: &str) -> Option<Vec<u8>> {
-        let src = format!("https://image.tmdb.org/t/p/w342{poster_path}");
-        let url = format!("{}/proxy/image", self.host);
-        let resp = self.client.get(url).query(&[("url", &src)]).send().ok()?;
+        let resp = if poster_path.starts_with('/') {
+            // already a proxied path (anilist covers come back like /proxy/image?url=...)
+            self.client.get(format!("{}{}", self.host, poster_path)).send().ok()?
+        } else if poster_path.starts_with("http") {
+            self.client.get(format!("{}/proxy/image", self.host)).query(&[("url", poster_path)]).send().ok()?
+        } else {
+            let src = format!("https://image.tmdb.org/t/p/w342{poster_path}");
+            self.client.get(format!("{}/proxy/image", self.host)).query(&[("url", &src)]).send().ok()?
+        };
         if !resp.status().is_success() {
             return None;
         }
         resp.bytes().ok().map(|b| b.to_vec())
+    }
+
+    pub fn anime_search(&self, query: &str) -> Result<Vec<Title>> {
+        let url = format!("{}/miruro/search", self.host);
+        let resp: AnimeSearchResp = self.client.get(url).query(&[("query", query)]).send()?.json()?;
+        Ok(resp.results.into_iter().map(AnimeItem::into_title).collect())
+    }
+
+    pub fn anime_providers(&self, anilist_id: u64) -> Result<Vec<AnimeProvider>> {
+        let url = format!("{}/miruro/episodes/{}", self.host, anilist_id);
+        let resp: EpisodesResp = self.client.get(url).send()?.json()?;
+        let mut providers: Vec<AnimeProvider> = resp
+            .providers
+            .into_iter()
+            .map(|(name, raw)| AnimeProvider {
+                name,
+                sub: raw.episodes.sub.unwrap_or_default().into_iter().map(AnimeEpRaw::into_ep).collect(),
+                dub: raw.episodes.dub.unwrap_or_default().into_iter().map(AnimeEpRaw::into_ep).collect(),
+            })
+            .collect();
+        let order = ["kiwi", "bee", "ally", "dune", "hop", "moo", "bonk"];
+        providers.sort_by_key(|p| order.iter().position(|o| *o == p.name).unwrap_or(usize::MAX));
+        Ok(providers)
+    }
+
+    pub fn anime_stream(&self, episode_id: &str, title: &str) -> Result<Stream> {
+        let url = format!("{}/miruro/{}", self.host, episode_id);
+        let resp: AnimeSourcesResp = self.client.get(url).send()?.json()?;
+        let mut streams: Vec<AnimeStreamRaw> = resp
+            .streams
+            .into_iter()
+            .filter(|s| {
+                let t = s.kind.to_lowercase();
+                (t == "mp4" || t == "hls" || s.url.contains(".m3u8")) && !s.url.is_empty()
+            })
+            .collect();
+        streams.sort_by_key(|s| -s.priority.unwrap_or(0));
+        let chosen = streams.into_iter().next().ok_or_else(|| anyhow!("no playable anime source"))?;
+        let endpoint = if chosen.url.contains(".m3u8") || chosen.kind.eq_ignore_ascii_case("hls") {
+            "manifest"
+        } else {
+            "segment"
+        };
+        let mut proxied = format!("{}/proxy/{}?url={}", self.host, endpoint, urlencoding::encode(&chosen.url));
+        if let Some(referer) = &chosen.referer {
+            proxied.push_str("&ref=");
+            proxied.push_str(&urlencoding::encode(referer));
+        }
+        Ok(Stream { url: proxied, referer: None, title: title.to_string(), start: None })
     }
 
     pub fn register(&self, username: &str, password: &str) -> Result<String> {
@@ -325,7 +383,11 @@ impl Api {
                 Ok(id) => id,
                 Err(_) => continue,
             };
-            let kind = if entry.kind == "tv" { Kind::Tv } else { Kind::Movie };
+            let kind = match entry.kind.as_str() {
+                "tv" => Kind::Tv,
+                "anime" => Kind::Anime,
+                _ => Kind::Movie,
+            };
             let show = self
                 .title_name(&entry.kind, id)
                 .or_else(|| entry.title.clone())
@@ -539,4 +601,127 @@ struct MeUser {
 struct NameResp {
     name: Option<String>,
     title: Option<String>,
+}
+
+pub struct AnimeEpisode {
+    pub id: String,
+    pub number: f64,
+    pub title: Option<String>,
+}
+
+impl fmt::Display for AnimeEpisode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let n = if self.number.fract() == 0.0 {
+            format!("{}", self.number as i64)
+        } else {
+            format!("{}", self.number)
+        };
+        match &self.title {
+            Some(t) => write!(f, "E{n} · {t}"),
+            None => write!(f, "E{n}"),
+        }
+    }
+}
+
+pub struct AnimeProvider {
+    pub name: String,
+    pub sub: Vec<AnimeEpisode>,
+    pub dub: Vec<AnimeEpisode>,
+}
+
+#[derive(Deserialize)]
+struct AnimeSearchResp {
+    results: Vec<AnimeItem>,
+}
+
+#[derive(Deserialize)]
+struct AnimeItem {
+    id: u64,
+    title: Option<AnimeTitleField>,
+    #[serde(rename = "seasonYear")]
+    season_year: Option<u32>,
+    episodes: Option<u32>,
+    cover_image: Option<AnimeCover>,
+    #[serde(rename = "coverImage")]
+    cover_image_alt: Option<AnimeCover>,
+}
+
+#[derive(Deserialize)]
+struct AnimeTitleField {
+    english: Option<String>,
+    romaji: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AnimeCover {
+    large: Option<String>,
+    #[serde(rename = "extraLarge")]
+    extra_large: Option<String>,
+}
+
+impl AnimeItem {
+    fn into_title(self) -> Title {
+        let title = self.title.as_ref();
+        let name = title
+            .and_then(|t| t.english.clone().or_else(|| t.romaji.clone()))
+            .unwrap_or_else(|| "Untitled".into());
+        let cover = self.cover_image.or(self.cover_image_alt);
+        let poster = cover.and_then(|c| c.extra_large.or(c.large));
+        Title {
+            id: self.id,
+            kind: Kind::Anime,
+            name,
+            year: self.season_year.map(|y| y.to_string()).unwrap_or_default(),
+            rating: 0.0,
+            overview: self.episodes.map(|e| format!("{e} episodes")),
+            poster_path: poster,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct EpisodesResp {
+    #[serde(default)]
+    providers: HashMap<String, ProviderRaw>,
+}
+
+#[derive(Deserialize)]
+struct ProviderRaw {
+    #[serde(default)]
+    episodes: CategoriesRaw,
+}
+
+#[derive(Deserialize, Default)]
+struct CategoriesRaw {
+    sub: Option<Vec<AnimeEpRaw>>,
+    dub: Option<Vec<AnimeEpRaw>>,
+}
+
+#[derive(Deserialize)]
+struct AnimeEpRaw {
+    id: String,
+    #[serde(default)]
+    number: f64,
+    title: Option<String>,
+}
+
+impl AnimeEpRaw {
+    fn into_ep(self) -> AnimeEpisode {
+        AnimeEpisode { id: self.id, number: self.number, title: self.title }
+    }
+}
+
+#[derive(Deserialize)]
+struct AnimeSourcesResp {
+    #[serde(default)]
+    streams: Vec<AnimeStreamRaw>,
+}
+
+#[derive(Deserialize)]
+struct AnimeStreamRaw {
+    url: String,
+    #[serde(rename = "type", default)]
+    kind: String,
+    referer: Option<String>,
+    priority: Option<i64>,
 }

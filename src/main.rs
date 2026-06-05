@@ -9,6 +9,7 @@ use viel::{deps, download, picker, player, ui};
 enum Home {
     Continue,
     Search,
+    Anime,
     Random,
     Download,
     Account,
@@ -20,6 +21,7 @@ impl fmt::Display for Home {
         let label = match self {
             Home::Continue => "continue",
             Home::Search => "search",
+            Home::Anime => "anime",
             Home::Random => "random",
             Home::Download => "download",
             Home::Account => "account",
@@ -103,6 +105,7 @@ fn app() -> Result<()> {
             menu.push(Home::Continue);
         }
         menu.push(Home::Search);
+        menu.push(Home::Anime);
         menu.push(Home::Random);
         menu.push(Home::Download);
         menu.push(Home::Account);
@@ -111,6 +114,7 @@ fn app() -> Result<()> {
         let result = match ui::select(&greeting, menu)? {
             Some(Home::Continue) => resume(&api, &cfg),
             Some(Home::Search) => browse(&api, &cfg, user.is_some()),
+            Some(Home::Anime) => anime_browse(&api, &cfg),
             Some(Home::Random) => random(&api, &cfg, user.is_some()),
             Some(Home::Download) => download::flow(&api, &cfg),
             Some(Home::Account) => account(&mut api, &cfg, &mut user),
@@ -217,10 +221,66 @@ fn random(api: &Api, cfg: &Config, logged_in: bool) -> Result<()> {
     watch(api, cfg, logged_in, &trending[index])
 }
 
+fn anime_browse(api: &Api, cfg: &Config) -> Result<()> {
+    ui::clear();
+    let Some(query) = ui::text("search anime")? else {
+        return Ok(());
+    };
+    if query.trim().is_empty() {
+        return Ok(());
+    }
+    let results = api.anime_search(query.trim())?;
+    if results.is_empty() {
+        println!("nothing found");
+        sleep(Duration::from_millis(900));
+        return Ok(());
+    }
+    let Some(title) = picker::pick_title(api, "anime", results)? else {
+        return Ok(());
+    };
+    anime_flow(api, cfg, &title)
+}
+
+fn anime_flow(api: &Api, cfg: &Config, title: &Title) -> Result<()> {
+    let mut providers = api.anime_providers(title.id)?;
+    let has_sub = providers.iter().any(|p| !p.sub.is_empty());
+    let has_dub = providers.iter().any(|p| !p.dub.is_empty());
+    if !has_sub && !has_dub {
+        println!("no episodes found");
+        ui::pause();
+        return Ok(());
+    }
+    let dub = if has_sub && has_dub {
+        match ui::select("audio", vec!["sub", "dub"])? {
+            Some(c) => c == "dub",
+            None => return Ok(()),
+        }
+    } else {
+        has_dub
+    };
+    let Some(idx) = providers.iter().position(|p| if dub { !p.dub.is_empty() } else { !p.sub.is_empty() }) else {
+        return Ok(());
+    };
+    let provider = providers.swap_remove(idx);
+    let episodes = if dub { provider.dub } else { provider.sub };
+    ui::clear();
+    println!("via {} · {}", provider.name, if dub { "dub" } else { "sub" });
+    let Some(episode) = ui::select("episode", episodes)? else {
+        return Ok(());
+    };
+    let label = format!("{} · {}", title.name, episode);
+    let stream = api.anime_stream(&episode.id, &label)?;
+    player::play(&cfg.player, &stream, |_, _| {})
+}
+
 fn watch(api: &Api, cfg: &Config, logged_in: bool, title: &Title) -> Result<()> {
     ui::clear();
+    if title.kind == Kind::Anime {
+        return anime_flow(api, cfg, title);
+    }
     detail(title);
     match title.kind {
+        Kind::Anime => anime_flow(api, cfg, title),
         Kind::Movie => {
             if ui::confirm("play this?")? {
                 play_movie(api, cfg, logged_in, title, None)?;
@@ -263,7 +323,7 @@ fn resume(api: &Api, cfg: &Config) -> Result<()> {
     };
     match row.kind {
         Kind::Movie => play_movie(api, cfg, true, &title, start),
-        Kind::Tv => play_episode(api, cfg, true, &title, row.season, row.episode, "", start),
+        Kind::Tv | Kind::Anime => play_episode(api, cfg, true, &title, row.season, row.episode, "", start),
     }
 }
 
