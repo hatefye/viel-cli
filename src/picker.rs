@@ -45,7 +45,7 @@ fn run<B: ratatui::backend::Backend>(
             .or_insert_with(|| items[sel].poster_path.as_ref().and_then(|p| api.poster(p)));
 
         term.draw(|f| {
-            let cols = Layout::horizontal([Constraint::Percentage(45), Constraint::Percentage(55)]).split(f.area());
+            let cols = Layout::horizontal([Constraint::Percentage(38), Constraint::Percentage(62)]).split(f.area());
 
             let rows: Vec<ListItem> = items.iter().map(|t| ListItem::new(t.to_string())).collect();
             let list = List::new(rows)
@@ -59,7 +59,7 @@ fn run<B: ratatui::backend::Backend>(
             f.render_widget(block, cols[1]);
 
             let title = &items[sel];
-            let poster_h = ((inner.width as u32 * 3 / 4) as u16).min(inner.height.saturating_sub(5));
+            let poster_h = ((inner.width as u32 * 3 / 4) as u16).min(inner.height.saturating_sub(4));
             let panes = Layout::vertical([Constraint::Length(poster_h), Constraint::Min(0)]).split(inner);
 
             if let Some(Some(bytes)) = cache.get(&sel) {
@@ -68,7 +68,7 @@ fn run<B: ratatui::backend::Backend>(
             }
 
             let meta = if title.rating > 0.0 {
-                format!("{} · {} · ★{:.1}", title.year, title.kind, title.rating)
+                format!("{} · {} · ★ {:.1}", title.year, title.kind, title.rating)
             } else {
                 format!("{} · {}", title.year, title.kind)
             };
@@ -124,7 +124,7 @@ fn poster_lines(bytes: &[u8], max_w: u16, max_h: u16) -> Vec<Line<'static>> {
     let scale = (target_w as f32 / iw as f32).min(target_h as f32 / ih as f32);
     let nw = ((iw as f32 * scale) as u32).max(1);
     let nh = ((ih as f32 * scale) as u32).max(2);
-    let resized = image::imageops::resize(&img, nw, nh, FilterType::Triangle);
+    let resized = image::imageops::resize(&img, nw, nh, FilterType::Lanczos3);
     let pad = (target_w.saturating_sub(nw) / 2) as usize;
 
     let mut lines = Vec::new();
