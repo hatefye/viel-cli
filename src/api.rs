@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::time::Duration;
 
-const SOURCES: [&str; 4] = ["vidrock", "vidzee", "videasy", "anyembed"];
+const SOURCES: [&str; 5] = ["mapple", "vixsrc", "vidzee", "vidlove", "vidrock"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -294,7 +294,7 @@ impl Api {
     }
 
     pub fn subtitles(&self, path: &str) -> Vec<Subtitle> {
-        let url = format!("{}/proxy/videasy-subs/{}", self.host, path);
+        let url = format!("{}/proxy/vidcore-subs/{}", self.host, path);
         let resp = match self.client.get(url).send() {
             Ok(r) if r.status().is_success() => r,
             _ => return Vec::new(),
@@ -307,7 +307,15 @@ impl Api {
             .into_iter()
             .filter(|s| !s.file.is_empty())
             .map(|s| Subtitle {
-                url: format!("{}/proxy/subtitle?url={}", self.host, urlencoding::encode(&s.file)),
+                url: match &s.r#ref {
+                    Some(r) if !r.is_empty() => format!(
+                        "{}/proxy/subtitle?url={}&ref={}",
+                        self.host,
+                        urlencoding::encode(&s.file),
+                        urlencoding::encode(r)
+                    ),
+                    _ => format!("{}/proxy/subtitle?url={}", self.host, urlencoding::encode(&s.file)),
+                },
                 lang: s.lang.or(s.label).unwrap_or_default(),
             })
             .collect()
@@ -764,4 +772,5 @@ struct SubRaw {
     file: String,
     lang: Option<String>,
     label: Option<String>,
+    r#ref: Option<String>,
 }
