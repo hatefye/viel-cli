@@ -1,9 +1,8 @@
-use crate::api::{self, Api, Kind, Stream, Title};
+use crate::api::{Api, Stream, Title};
 use crate::config::Config;
 use crate::hls::{self, Part};
-use crate::{deps, net, picker, relay, ui};
+use crate::{deps, net, relay, ui};
 use anyhow::{anyhow, bail, Context, Result};
-use std::fmt;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,96 +11,70 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 
-enum Category {
-    Movies,
-    Tv,
-    Anime,
-}
-
-impl fmt::Display for Category {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let label = match self {
-            Category::Movies => "movies",
-            Category::Tv => "tv shows",
-            Category::Anime => "anime",
-        };
-        f.write_str(label)
-    }
-}
-
-enum Scope {
-    Episode,
-    Range,
-    Season,
-    Everything,
-}
-
-impl fmt::Display for Scope {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let label = match self {
-            Scope::Episode => "one episode",
-            Scope::Range => "a range of episodes",
-            Scope::Season => "a whole season",
-            Scope::Everything => "everything",
-        };
-        f.write_str(label)
-    }
-}
-
-enum Target {
+pub enum Target {
     Media { path: String, movie: bool },
     Anime(Vec<(String, String)>),
 }
 
-struct Job {
-    target: Target,
-    label: String,
-    filename: String,
+pub struct Job {
+    pub target: Target,
+    pub label: String,
+    pub filename: String,
 }
 
-pub fn flow(api: &Api, cfg: &Config) -> Result<()> {
-    ui::clear();
-    let category = match ui::select("download what?", vec![Category::Movies, Category::Tv, Category::Anime])? {
-        Some(c) => c,
-        None => return Ok(()),
-    };
-    ui::clear();
-    let Some(query) = ui::text("search")? else {
-        return Ok(());
-    };
-    if query.trim().is_empty() {
-        return Ok(());
+pub fn movie_job(title: &Title) -> Job {
+    Job {
+        target: Target::Media { path: title.id.to_string(), movie: true },
+        label: title.name.clone(),
+        filename: sanitize(&movie_name(title)),
     }
+}
 
-    let ffmpeg = match ensure_ffmpeg() {
-        Some(f) => f,
-        None => return Ok(()),
-    };
+pub fn tv_job(title: &Title, season: u32, episode: u32, name: &str) -> Job {
+    Job {
+        target: Target::Media { path: format!("{}/{}/{}", title.id, season, episode), movie: false },
+        label: format!("{} S{season:02}E{episode:02} · {name}", title.name),
+        filename: sanitize(&format!("{} S{season:02}E{episode:02} {name}.mkv", title.name)),
+    }
+}
 
-    let jobs = match category {
-        Category::Anime => anime_jobs(api, cfg, query.trim())?,
-        Category::Movies => media_jobs(api, query.trim(), Kind::Movie)?,
-        Category::Tv => media_jobs(api, query.trim(), Kind::Tv)?,
-    };
-    let jobs = match jobs {
-        Some(j) if !j.is_empty() => j,
-        _ => return Ok(()),
-    };
+pub fn anime_job(title: &Title, number: f64, dub: bool, sources: Vec<(String, String)>) -> Job {
+    let num = number as u32;
+    let tag = if dub { " (dub)" } else { "" };
+    Job {
+        target: Target::Anime(sources),
+        label: format!("{} E{num:02}{tag}", title.name),
+        filename: sanitize(&format!("{} E{num:02}{tag}.mkv", title.name)),
+    }
+}
 
+pub fn run_jobs(api: &Api, cfg: &Config, jobs: Vec<Job>) -> Result<()> {
+    let Some(ffmpeg) = ensure_ffmpeg() else {
+        return Ok(());
+    };
     let dir = PathBuf::from(&cfg.download_dir);
-    std::fs::create_dir_all(&dir).ok();
+    fs::create_dir_all(&dir).ok();
     ui::clear();
     println!("saving to {}\n", dir.display());
     let total = jobs.len();
+    let mut failed = 0;
     for (i, job) in jobs.iter().enumerate() {
         println!("[{}/{}] {}", i + 1, total, job.label);
         match run_job(api, cfg, &ffmpeg, &dir, job) {
             Ok(path) => println!("saved {}\n", path.display()),
-            Err(err) => println!("failed: {err}\n"),
+            Err(err) => {
+                failed += 1;
+                println!("failed: {err}\n");
+            }
         }
     }
-    println!("done.");
-    ui::pause();
+    if failed > 0 {
+        println!("{failed} of {total} failed.");
+        ui::pause();
+    } else {
+        println!("done.");
+        thread::sleep(Duration::from_millis(1200));
+    }
     Ok(())
 }
 
@@ -116,162 +89,6 @@ fn ensure_ffmpeg() -> Option<String> {
         ui::pause();
     }
     found
-}
-
-fn media_jobs(api: &Api, query: &str, kind: Kind) -> Result<Option<Vec<Job>>> {
-    let results: Vec<Title> = api.search(query)?.into_iter().filter(|t| t.kind == kind).collect();
-    if results.is_empty() {
-        println!("nothing found");
-        ui::pause();
-        return Ok(None);
-    }
-    let Some(title) = picker::pick_title(api, "download", results)? else {
-        return Ok(None);
-    };
-
-    if title.kind == Kind::Movie {
-        return Ok(Some(vec![Job {
-            target: Target::Media { path: title.id.to_string(), movie: true },
-            label: title.name.clone(),
-            filename: sanitize(&movie_name(&title)),
-        }]));
-    }
-
-    let scope = match ui::select("what to download", vec![Scope::Episode, Scope::Range, Scope::Season, Scope::Everything])? {
-        Some(s) => s,
-        None => return Ok(None),
-    };
-    let seasons = api.seasons(title.id)?;
-    if seasons.is_empty() {
-        return Ok(None);
-    }
-
-    let mut jobs = Vec::new();
-    match scope {
-        Scope::Everything => {
-            for season in &seasons {
-                for ep in api.episodes(title.id, season.number)? {
-                    jobs.push(tv_job(&title, season.number, ep.number, &ep.name));
-                }
-            }
-        }
-        Scope::Season => {
-            let Some(season) = ui::select("season", seasons)? else {
-                return Ok(None);
-            };
-            for ep in api.episodes(title.id, season.number)? {
-                jobs.push(tv_job(&title, season.number, ep.number, &ep.name));
-            }
-        }
-        Scope::Episode => {
-            let Some(season) = ui::select("season", seasons)? else {
-                return Ok(None);
-            };
-            let episodes = api.episodes(title.id, season.number)?;
-            let Some(ep) = ui::select("episode", episodes)? else {
-                return Ok(None);
-            };
-            jobs.push(tv_job(&title, season.number, ep.number, &ep.name));
-        }
-        Scope::Range => {
-            let Some(season) = ui::select("season", seasons)? else {
-                return Ok(None);
-            };
-            let (lo, hi) = match ask_range()? {
-                Some(r) => r,
-                None => return Ok(None),
-            };
-            for ep in api.episodes(title.id, season.number)? {
-                if ep.number >= lo && ep.number <= hi {
-                    jobs.push(tv_job(&title, season.number, ep.number, &ep.name));
-                }
-            }
-        }
-    }
-    Ok(Some(jobs))
-}
-
-fn anime_jobs(api: &Api, cfg: &Config, query: &str) -> Result<Option<Vec<Job>>> {
-    let results = api.anime_search(query)?;
-    if results.is_empty() {
-        println!("nothing found");
-        ui::pause();
-        return Ok(None);
-    }
-    let Some(title) = picker::pick_title(api, "download", results)? else {
-        return Ok(None);
-    };
-    let sub = api.anime_providers(title.id, false)?;
-    let dub = api.anime_providers(title.id, true)?;
-    if sub.is_empty() && dub.is_empty() {
-        println!("no episodes found");
-        ui::pause();
-        return Ok(None);
-    }
-    let want_dub = if !sub.is_empty() && !dub.is_empty() {
-        let default = if cfg.audio.eq_ignore_ascii_case("dub") { 1 } else { 0 };
-        match ui::select_from("audio", vec!["sub", "dub"], default)? {
-            Some(c) => c == "dub",
-            None => return Ok(None),
-        }
-    } else {
-        sub.is_empty()
-    };
-    let providers = if want_dub { dub } else { sub };
-    let episodes = api::merge_episodes(&providers);
-
-    let scope = match ui::select("what to download", vec![Scope::Episode, Scope::Range, Scope::Everything])? {
-        Some(s) => s,
-        None => return Ok(None),
-    };
-    let selected: Vec<_> = match scope {
-        Scope::Everything => episodes,
-        Scope::Range => {
-            let (lo, hi) = match ask_range()? {
-                Some(r) => r,
-                None => return Ok(None),
-            };
-            episodes.into_iter().filter(|e| e.number as u32 >= lo && e.number as u32 <= hi).collect()
-        }
-        Scope::Episode | Scope::Season => {
-            let Some(ep) = ui::select("episode", episodes)? else {
-                return Ok(None);
-            };
-            vec![ep]
-        }
-    };
-
-    let tag = if want_dub { " (dub)" } else { "" };
-    let jobs = selected
-        .into_iter()
-        .map(|ep| {
-            let num = ep.number as u32;
-            Job {
-                target: Target::Anime(api::episode_sources(&providers, ep.number)),
-                label: format!("{} E{num:02}{tag}", title.name),
-                filename: sanitize(&format!("{} E{num:02}{tag}.mkv", title.name)),
-            }
-        })
-        .collect();
-    Ok(Some(jobs))
-}
-
-fn ask_range() -> Result<Option<(u32, u32)>> {
-    let Some(first) = ui::text("first episode number")? else {
-        return Ok(None);
-    };
-    let Some(last) = ui::text("last episode number")? else {
-        return Ok(None);
-    };
-    Ok(Some((first.trim().parse().unwrap_or(0), last.trim().parse().unwrap_or(0))))
-}
-
-fn tv_job(title: &Title, season: u32, episode: u32, name: &str) -> Job {
-    Job {
-        target: Target::Media { path: format!("{}/{}/{}", title.id, season, episode), movie: false },
-        label: format!("{} S{season:02}E{episode:02} · {name}", title.name),
-        filename: sanitize(&format!("{} S{season:02}E{episode:02} {name}.mkv", title.name)),
-    }
 }
 
 fn run_job(api: &Api, cfg: &Config, ffmpeg: &str, dir: &Path, job: &Job) -> Result<PathBuf> {

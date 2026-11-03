@@ -35,6 +35,7 @@ impl fmt::Display for Kind {
     }
 }
 
+#[derive(Clone)]
 pub struct Title {
     pub id: u64,
     pub kind: Kind,
@@ -75,6 +76,8 @@ impl fmt::Display for Season {
 pub struct Episode {
     pub number: u32,
     pub name: String,
+    pub overview: String,
+    pub still: Option<String>,
 }
 
 impl fmt::Display for Episode {
@@ -102,10 +105,12 @@ pub struct Subtitle {
     pub lang: String,
 }
 
+#[derive(Clone)]
 pub struct ContinueRow {
     pub id: u64,
     pub kind: Kind,
     pub show: String,
+    pub poster: Option<String>,
     pub season: u32,
     pub episode: u32,
     pub position: f64,
@@ -129,6 +134,7 @@ impl fmt::Display for ContinueRow {
     }
 }
 
+#[derive(Clone)]
 pub struct Api {
     client: Client,
     host: String,
@@ -194,6 +200,8 @@ impl Api {
             .map(|e| Episode {
                 number: e.episode_number,
                 name: e.name,
+                overview: e.overview.unwrap_or_default(),
+                still: e.still_path.filter(|s| !s.is_empty()),
             })
             .collect())
     }
@@ -309,9 +317,26 @@ impl Api {
     }
 
     pub fn anime_name(&self, anilist_id: u64) -> Option<String> {
+        self.anime_info(anilist_id).map(|(n, _)| n)
+    }
+
+    pub fn anime_info(&self, anilist_id: u64) -> Option<(String, Option<String>)> {
         let url = format!("{}/miruro/info/{}", self.host, anilist_id);
         let info: AnimeInfo = self.client.get(url).send().ok()?.json().ok()?;
-        info.title.and_then(|t| t.english.or(t.romaji))
+        let name = info.title.and_then(|t| t.english.or(t.romaji))?;
+        let cover = info.cover_image.and_then(|c| c.extra_large.or(c.large));
+        Some((name, cover))
+    }
+
+    pub fn anime_episode_meta(&self, anilist_id: u64) -> Vec<EpisodeMeta> {
+        let url = format!("{}/miruro/tmdb-episodes/{}", self.host, anilist_id);
+        self.client
+            .get(url)
+            .send()
+            .ok()
+            .and_then(|r| r.json::<EpisodeMetaResp>().ok())
+            .map(|r| r.episodes)
+            .unwrap_or_default()
     }
 
     pub fn subtitles(&self, path: &str) -> Vec<Subtitle> {
@@ -381,13 +406,13 @@ impl Api {
                 "anime" => Kind::Anime,
                 _ => Kind::Movie,
             };
-            let show = if kind == Kind::Anime { self.anime_name(id) } else { self.title_name(&entry.kind, id) }
-                .or_else(|| entry.title.clone())
-                .unwrap_or_else(|| "untitled".into());
+            let (show, poster) = if kind == Kind::Anime { self.anime_info(id) } else { self.title_info(&entry.kind, id) }
+                .unwrap_or_else(|| (entry.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| "untitled".into()), None));
             rows.push(ContinueRow {
                 id,
                 kind,
                 show,
+                poster,
                 season: entry.season as u32,
                 episode: entry.episode as u32,
                 position: entry.position,
@@ -406,11 +431,11 @@ impl Api {
         Ok(())
     }
 
-    fn title_name(&self, kind: &str, id: u64) -> Option<String> {
+    fn title_info(&self, kind: &str, id: u64) -> Option<(String, Option<String>)> {
         let slug = if kind == "tv" { "tv" } else { "movie" };
         let url = format!("{}/proxy/tmdb/{}/{}", self.host, slug, id);
         let resp: NameResp = self.client.get(url).send().ok()?.json().ok()?;
-        resp.name.or(resp.title)
+        Some((resp.name.or(resp.title)?, resp.poster_path.filter(|p| !p.is_empty())))
     }
 
     fn authed(&self, builder: RequestBuilder) -> RequestBuilder {
@@ -570,6 +595,8 @@ struct SeasonDetail {
 struct EpisodeItem {
     episode_number: u32,
     name: String,
+    overview: Option<String>,
+    still_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -598,6 +625,22 @@ struct MeUser {
 struct NameResp {
     name: Option<String>,
     title: Option<String>,
+    poster_path: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct EpisodeMetaResp {
+    #[serde(default)]
+    episodes: Vec<EpisodeMeta>,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct EpisodeMeta {
+    #[serde(default)]
+    pub num: f64,
+    pub title: Option<String>,
+    pub desc: Option<String>,
+    pub still: Option<String>,
 }
 
 pub struct AnimeEpisode {
@@ -758,6 +801,8 @@ struct Span {
 #[derive(Deserialize)]
 struct AnimeInfo {
     title: Option<AnimeTitleField>,
+    #[serde(rename = "coverImage")]
+    cover_image: Option<AnimeCover>,
 }
 
 #[derive(Deserialize)]

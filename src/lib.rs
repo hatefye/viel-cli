@@ -4,7 +4,7 @@ pub mod deps;
 pub mod download;
 pub mod hls;
 pub mod net;
-pub mod picker;
 pub mod player;
 pub mod relay;
+pub mod screen;
 pub mod ui;

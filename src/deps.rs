@@ -1,67 +1,7 @@
-use crate::api::Api;
 use crate::ui;
-use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::execute;
-use crossterm::terminal::{size, Clear, ClearType};
-use std::io::{stdout, Write};
+
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::thread;
-use std::time::Duration;
 
-const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const PENDING: u8 = 0;
-const OK: u8 = 1;
-const FAIL: u8 = 2;
-
-pub struct Report {
-    pub player: bool,
-    pub host: bool,
-}
-
-pub fn check(api: &Api, player: &str) -> Report {
-    let (cols, rows) = size().unwrap_or((80, 24));
-    let mid = rows / 2;
-    let _ = execute!(stdout(), Clear(ClearType::All), Hide);
-    put(cols, mid.saturating_sub(2), 4, "\x1b[1m\x1b[38;2;220;38;38mviel\x1b[0m");
-    put(cols, mid.saturating_sub(1), 21, "\x1b[2mchecking dependencies\x1b[0m");
-
-    let player_state = AtomicU8::new(PENDING);
-    let host_state = AtomicU8::new(PENDING);
-
-    thread::scope(|scope| {
-        scope.spawn(|| {
-            let ok = has(player);
-            player_state.store(if ok { OK } else { FAIL }, Ordering::SeqCst);
-        });
-        scope.spawn(|| {
-            let ok = api.reachable();
-            host_state.store(if ok { OK } else { FAIL }, Ordering::SeqCst);
-        });
-
-        let mut frame = 0;
-        loop {
-            let p = player_state.load(Ordering::SeqCst);
-            let h = host_state.load(Ordering::SeqCst);
-            draw(cols, mid + 1, player, p, frame);
-            draw(cols, mid + 2, "server", h, frame);
-            if p != PENDING && h != PENDING {
-                break;
-            }
-            thread::sleep(Duration::from_millis(80));
-            frame += 1;
-        }
-    });
-
-    thread::sleep(Duration::from_millis(600));
-    let _ = execute!(stdout(), Show, MoveTo(0, rows.saturating_sub(1)));
-    println!();
-
-    Report {
-        player: player_state.load(Ordering::SeqCst) == OK,
-        host: host_state.load(Ordering::SeqCst) == OK,
-    }
-}
 
 pub fn install_tool(tool: &str) -> bool {
     let Some(plan) = plan(tool) else {
@@ -85,10 +25,10 @@ pub fn install_tool(tool: &str) -> bool {
         println!("\ninstall did not complete.");
         return false;
     }
-    if has(tool) {
-        println!("\n{tool} installed.");
-    } else {
-        println!("\n{tool} installed. restart your terminal so it lands on PATH, then run viel again.");
+    let found = if tool == "ffmpeg" { resolve_ffmpeg() } else { resolve_player(tool) };
+    match found {
+        Some(_) => println!("\n{tool} installed."),
+        None => println!("\n{tool} installed, but it is not on PATH yet. restart your terminal and run viel again."),
     }
     true
 }
@@ -318,28 +258,12 @@ fn find_exe(dir: &std::path::Path, depth: u8) -> Option<String> {
 }
 
 fn has(bin: &str) -> bool {
+    let flag = if bin.ends_with("ffmpeg") || bin.ends_with("ffmpeg.exe") { "-version" } else { "--version" };
     Command::new(bin)
-        .arg("--version")
+        .arg(flag)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-fn draw(cols: u16, row: u16, label: &str, state: u8, frame: usize) {
-    let width = 2 + label.chars().count();
-    let colored = match state {
-        OK => format!("\x1b[32m✓\x1b[0m {label}"),
-        FAIL => format!("\x1b[31m✗\x1b[0m {label}"),
-        _ => format!("{} {label}", FRAMES[frame % FRAMES.len()]),
-    };
-    put(cols, row, width, &colored);
-}
-
-fn put(cols: u16, row: u16, width: usize, text: &str) {
-    let col = cols.saturating_sub(width as u16) / 2;
-    let _ = execute!(stdout(), MoveTo(col, row));
-    print!("{text}");
-    let _ = stdout().flush();
 }

@@ -1,7 +1,7 @@
 # viel
 
-A terminal client for viel. Search and watch movies, TV, and anime from the
-shell with mpv, and download them to your own machine.
+A terminal client for viel. One screen: type to search movies, TV and anime,
+pick something, it plays in mpv. Download anything to your own machine.
 
 viel asks the server which sources carry a title, then streams and downloads
 straight from each source's CDN on your PC. A small relay inside the binary
@@ -18,7 +18,7 @@ cargo install --path .
 ```
 
 Needs [mpv](https://mpv.io) for playback and [ffmpeg](https://ffmpeg.org) for
-downloads. On first run viel offers to install whichever is missing.
+downloads. viel offers to install whichever is missing when it first needs it.
 
 ## Usage
 
@@ -26,10 +26,25 @@ downloads. On first run viel offers to install whichever is missing.
 viel
 ```
 
-- **search** movies and TV, pick a season and episode, and it plays in mpv
-- **anime** with sub or dub, every provider's episode list merged into one
-- **continue** where you left off, synced with your viel account
-- **download** a movie, an episode, a range, a season, or everything
+Start typing. Results update as you type, anime first, then movies and TV.
+Before you type anything the list shows what you were watching and what's
+trending.
+
+| key | home | episodes |
+|---|---|---|
+| `⏎` | open | play |
+| `d` | | download this episode |
+| `D` | | download the season, or everything |
+| `a` | | switch sub / dub (anime) |
+| `^d` | download a movie | |
+| `^a` | account | |
+| `^s` | settings | |
+| `esc` | clear search, then quit | back |
+
+When an episode ends the next one starts after a short countdown; `esc` stops
+it and leaves the cursor on the next episode. Coming back from an episode
+keeps your search. Playback position syncs with your viel account, so the
+website and the CLI both continue where the other left off.
 
 Each title is checked against every source at once, and playback starts on
 the best one that answers, in this order:
@@ -43,7 +58,7 @@ the best one that answers, in this order:
 | vidrock | | |
 
 If a source fails, the next one takes over. Anime intros are skipped
-automatically on Linux and macOS. After an episode ends, viel offers the next.
+automatically.
 
 Downloads fetch eight segments at a time, then remux locally into `.mkv` with
 the subtitle in your language embedded. A full episode usually takes one to
@@ -62,7 +77,7 @@ audio = "sub"
 ```
 
 `VIEL_HOST` and `VIEL_PLAYER` override the file. Everything is also editable
-from the settings menu.
+from settings (`^s`).
 
 ## License
 
