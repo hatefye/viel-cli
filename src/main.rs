@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::fmt;
 use std::thread::sleep;
 use std::time::Duration;
-use viel::api::{Api, Kind, ProgressUpdate, Title};
+use viel::api::{self, Api, Kind, ProgressUpdate, Stream, Title};
 use viel::config::{self, Config};
 use viel::{deps, download, picker, player, ui};
 
@@ -140,7 +140,7 @@ fn app() -> Result<()> {
         let result = match ui::select(&greeting, menu)? {
             Some(Home::Continue) => resume(&api, &cfg),
             Some(Home::Search) => browse(&api, &cfg, user.is_some()),
-            Some(Home::Anime) => anime_browse(&api, &cfg),
+            Some(Home::Anime) => anime_browse(&api, &cfg, user.is_some()),
             Some(Home::Random) => random(&api, &cfg, user.is_some()),
             Some(Home::Download) => download::flow(&api, &cfg),
             Some(Home::Account) => account(&mut api, &cfg, &mut user),
@@ -294,7 +294,7 @@ fn random(api: &Api, cfg: &Config, logged_in: bool) -> Result<()> {
     watch(api, cfg, logged_in, &trending[index])
 }
 
-fn anime_browse(api: &Api, cfg: &Config) -> Result<()> {
+fn anime_browse(api: &Api, cfg: &Config, logged_in: bool) -> Result<()> {
     ui::clear();
     let Some(query) = ui::text("search anime")? else {
         return Ok(());
@@ -311,49 +311,65 @@ fn anime_browse(api: &Api, cfg: &Config) -> Result<()> {
     let Some(title) = picker::pick_title(api, "anime", results)? else {
         return Ok(());
     };
-    anime_flow(api, cfg, &title)
+    anime_flow(api, cfg, logged_in, &title, None)
 }
 
-fn anime_flow(api: &Api, cfg: &Config, title: &Title) -> Result<()> {
-    let mut providers = api.anime_providers(title.id)?;
-    let has_sub = providers.iter().any(|p| !p.sub.is_empty());
-    let has_dub = providers.iter().any(|p| !p.dub.is_empty());
-    if !has_sub && !has_dub {
+fn anime_flow(api: &Api, cfg: &Config, logged_in: bool, title: &Title, resume: Option<(u32, Option<f64>)>) -> Result<()> {
+    let want_dub = cfg.audio.eq_ignore_ascii_case("dub");
+    let mut dub = want_dub;
+    let mut providers = api.anime_providers(title.id, dub)?;
+    if providers.is_empty() {
+        dub = !dub;
+        providers = api.anime_providers(title.id, dub)?;
+    }
+    if providers.is_empty() {
         println!("no episodes found");
         ui::pause();
         return Ok(());
     }
-    let want_dub = cfg.audio.eq_ignore_ascii_case("dub");
-    let dub = if want_dub && has_dub {
-        true
-    } else if !want_dub && has_sub {
-        false
-    } else {
-        has_dub
+    let episodes = api::merge_episodes(&providers);
+    let mut index = match resume {
+        Some((ep, _)) => episodes.iter().position(|e| e.number as u32 == ep).unwrap_or(0),
+        None => {
+            ui::clear();
+            if dub != want_dub {
+                println!("only {} is available for this one\n", if dub { "dub" } else { "sub" });
+            }
+            let names: Vec<String> = episodes.iter().map(|e| e.to_string()).collect();
+            let Some(pick) = ui::select("episode", names)? else {
+                return Ok(());
+            };
+            episodes.iter().position(|e| e.to_string() == pick).unwrap_or(0)
+        }
     };
-    let Some(idx) = providers.iter().position(|p| if dub { !p.dub.is_empty() } else { !p.sub.is_empty() }) else {
-        return Ok(());
-    };
-    let provider = providers.swap_remove(idx);
-    let episodes = if dub { provider.dub } else { provider.sub };
-    ui::clear();
-    println!("via {} · {}", provider.name, if dub { "dub" } else { "sub" });
-    let Some(episode) = ui::select("episode", episodes)? else {
-        return Ok(());
-    };
-    let label = format!("{} · {}", title.name, episode);
-    let stream = api.anime_stream(&episode.id, &label)?;
-    player::play(&cfg.player, &stream, |_, _| {})
+    let mut start = resume.and_then(|(_, s)| s);
+    loop {
+        let ep = &episodes[index];
+        let label = format!("{} · {}{}", title.name, ep, if dub { " (dub)" } else { "" });
+        ui::clear();
+        println!("finding the best source for {label}");
+        let sources = api::episode_sources(&providers, ep.number);
+        let streams = sources.iter().filter_map(|(p, id)| api.anime_stream(p, id, &label)).map(|mut s| {
+            s.start = start;
+            s
+        });
+        let finished = play_any(api, cfg, logged_in, "anime", title.id, ep.title.as_deref().unwrap_or(&title.name), 0, ep.number as u32, streams)?;
+        start = None;
+        if !finished || index + 1 >= episodes.len() || !ui::confirm("next episode?")? {
+            return Ok(());
+        }
+        index += 1;
+    }
 }
 
 fn watch(api: &Api, cfg: &Config, logged_in: bool, title: &Title) -> Result<()> {
     ui::clear();
     if title.kind == Kind::Anime {
-        return anime_flow(api, cfg, title);
+        return anime_flow(api, cfg, logged_in, title, None);
     }
     detail(title);
     match title.kind {
-        Kind::Anime => anime_flow(api, cfg, title),
+        Kind::Anime => anime_flow(api, cfg, logged_in, title, None),
         Kind::Movie => {
             if ui::confirm("play this?")? {
                 play_movie(api, cfg, logged_in, title, None)?;
@@ -367,10 +383,18 @@ fn watch(api: &Api, cfg: &Config, logged_in: bool, title: &Title) -> Result<()> 
             };
             ui::clear();
             let episodes = api.episodes(title.id, season.number)?;
+            let catalog: Vec<(u32, String)> = episodes.iter().map(|e| (e.number, e.name.clone())).collect();
             let Some(episode) = ui::select("episode", episodes)? else {
                 return Ok(());
             };
-            play_episode(api, cfg, logged_in, title, season.number, episode.number, &episode.name, None)
+            let mut number = episode.number;
+            let mut name = episode.name.clone();
+            let last = catalog.iter().map(|(n, _)| *n).max().unwrap_or(number);
+            while play_episode(api, cfg, logged_in, title, season.number, number, &name, None)? && number < last && ui::confirm("next episode?")? {
+                number += 1;
+                name = catalog.iter().find(|(n, _)| *n == number).map(|(_, t)| t.clone()).unwrap_or_default();
+            }
+            Ok(())
         }
     }
 }
@@ -396,7 +420,8 @@ fn resume(api: &Api, cfg: &Config) -> Result<()> {
     };
     match row.kind {
         Kind::Movie => play_movie(api, cfg, true, &title, start),
-        Kind::Tv | Kind::Anime => play_episode(api, cfg, true, &title, row.season, row.episode, "", start),
+        Kind::Tv => play_episode(api, cfg, true, &title, row.season, row.episode, "", start).map(|_| ()),
+        Kind::Anime => anime_flow(api, cfg, true, &title, Some((row.episode, start))),
     }
 }
 
@@ -420,17 +445,25 @@ fn detail(title: &Title) {
 
 fn play_movie(api: &Api, cfg: &Config, logged_in: bool, title: &Title, start: Option<f64>) -> Result<()> {
     let id = title.id.to_string();
-    let mut stream = api.resolve(&id, &title.name, start)?;
-    attach_subs(api, cfg, &mut stream, &id);
-    run(api, cfg, logged_in, "movie", title.id, &title.name, 0, 0, &stream)
+    ui::clear();
+    println!("finding the best source for {}", title.name);
+    let streams = with_subs(api, cfg, &id, api.resolve(&id, &title.name, start, true));
+    play_any(api, cfg, logged_in, "movie", title.id, &title.name, 0, 0, streams.into_iter()).map(|_| ())
 }
 
-fn attach_subs(api: &Api, cfg: &Config, stream: &mut viel::api::Stream, path: &str) {
-    let mut subs = api.subtitles(path);
+fn with_subs(api: &Api, cfg: &Config, path: &str, mut streams: Vec<Stream>) -> Vec<Stream> {
     let pref = cfg.subtitle_lang.to_lowercase();
+    let mut subs: Vec<_> = api
+        .subtitles(path)
+        .into_iter()
+        .filter(|s| lang_matches(&s.lang, &pref) || lang_matches(&s.lang, "en"))
+        .collect();
     subs.sort_by_key(|s| !lang_matches(&s.lang, &pref));
-    subs.truncate(10);
-    stream.subs = subs;
+    subs.truncate(3);
+    for s in &mut streams {
+        s.subs = subs.clone();
+    }
+    streams
 }
 
 fn lang_matches(lang: &str, pref: &str) -> bool {
@@ -465,20 +498,21 @@ fn play_episode(
     episode: u32,
     episode_name: &str,
     start: Option<f64>,
-) -> Result<()> {
+) -> Result<bool> {
     let path = format!("{}/{}/{}", title.id, season, episode);
     let label = if episode_name.is_empty() {
         format!("{} · S{season}E{episode}", title.name)
     } else {
         format!("{} · S{season}E{episode} · {episode_name}", title.name)
     };
-    let mut stream = api.resolve(&path, &label, start)?;
-    attach_subs(api, cfg, &mut stream, &path);
-    run(api, cfg, logged_in, "tv", title.id, &title.name, season, episode, &stream)
+    ui::clear();
+    println!("finding the best source for {label}");
+    let streams = with_subs(api, cfg, &path, api.resolve(&path, &label, start, false));
+    play_any(api, cfg, logged_in, "tv", title.id, &title.name, season, episode, streams.into_iter())
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run(
+fn play_any(
     api: &Api,
     cfg: &Config,
     logged_in: bool,
@@ -487,21 +521,35 @@ fn run(
     history_title: &str,
     season: u32,
     episode: u32,
-    stream: &viel::api::Stream,
-) -> Result<()> {
-    player::play(&cfg.player, stream, |position, duration| {
-        if logged_in && duration > 0.0 {
-            let _ = api.save_progress(&ProgressUpdate {
-                kind,
-                content_id: id.to_string(),
-                season,
-                episode,
-                position,
-                duration,
-                title: history_title,
-            });
+    streams: impl Iterator<Item = Stream>,
+) -> Result<bool> {
+    let mut last_err = None;
+    for stream in streams {
+        println!("playing from {}", stream.source);
+        let mut watched = (0.0, 0.0);
+        let result = player::play(&cfg.player, &stream, |position, duration| {
+            watched = (position, duration);
+            if logged_in && duration > 0.0 {
+                let _ = api.save_progress(&ProgressUpdate {
+                    kind,
+                    content_id: id.to_string(),
+                    season,
+                    episode,
+                    position,
+                    duration,
+                    title: history_title,
+                });
+            }
+        });
+        match result {
+            Ok(()) => return Ok(watched.1 > 0.0 && watched.1 - watched.0 < 120.0),
+            Err(err) => {
+                println!("{} failed, trying the next source", stream.source);
+                last_err = Some(err);
+            }
         }
-    })
+    }
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("no working source found for this one")))
 }
 
 fn truncate(text: &str, limit: usize) -> String {

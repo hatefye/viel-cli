@@ -26,6 +26,10 @@ pub fn select<T: Display>(prompt: &str, options: Vec<T>) -> Result<Option<T>> {
     soft(Select::new(prompt, options).with_page_size(12).prompt())
 }
 
+pub fn select_from<T: Display>(prompt: &str, options: Vec<T>, start: usize) -> Result<Option<T>> {
+    soft(Select::new(prompt, options).with_page_size(12).with_starting_cursor(start).prompt())
+}
+
 pub fn text(prompt: &str) -> Result<Option<String>> {
     soft(Text::new(prompt).prompt())
 }

@@ -1,4 +1,5 @@
 use crate::api::Stream;
+use crate::relay;
 use anyhow::{Context, Result};
 use std::process::Command;
 
@@ -15,18 +16,16 @@ pub fn play(player: &str, stream: &Stream, progress: impl FnMut(f64, f64)) -> Re
 
 fn base(player: &str, stream: &Stream) -> Command {
     let mut cmd = Command::new(player);
-    cmd.arg(&stream.url);
+    let referer = stream.referer.as_deref();
+    cmd.arg(if stream.hls { relay::playlist(&stream.url, referer) } else { relay::video(&stream.url, referer) });
     cmd.arg(format!("--force-media-title={}", stream.title));
     cmd.arg("--force-window=yes");
     cmd.arg("--hls-bitrate=max");
     for sub in &stream.subs {
-        cmd.arg(format!("--sub-file={}", sub.url));
+        cmd.arg(format!("--sub-file={}", relay::subtitle(&sub.url, sub.referer.as_deref())));
     }
     if !stream.subs.is_empty() {
         cmd.arg("--sub-visibility=yes");
-    }
-    if let Some(referer) = &stream.referer {
-        cmd.arg(format!("--http-header-fields=Referer: {referer}"));
     }
     if let Some(start) = stream.start.filter(|s| *s > 0.0) {
         cmd.arg(format!("--start={}", start as u64));
@@ -76,12 +75,24 @@ fn tracked(player: &str, stream: &Stream, mut progress: impl FnMut(f64, f64)) ->
 
     let (mut last_pos, mut last_dur) = (0.0, 0.0);
     let mut elapsed = 0u64;
-    loop {
-        if child.try_wait()?.is_some() {
-            break;
+    let mut skipped = false;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
         }
         sleep(Duration::from_millis(500));
         elapsed += 500;
+        if let (Some((from, to)), false) = (stream.intro, skipped) {
+            if let Some(pos) = ask(&socket, "time-pos") {
+                if pos >= from && pos < to - 1.0 {
+                    command(&socket, &format!("[\"set_property\",\"time-pos\",{to}]"));
+                    command(&socket, "[\"show-text\",\"skipped intro\",1500]");
+                    skipped = true;
+                } else if pos >= to {
+                    skipped = true;
+                }
+            }
+        }
         if elapsed >= 10_000 {
             elapsed = 0;
             if let (Some(pos), Some(dur)) = (ask(&socket, "time-pos"), ask(&socket, "duration")) {
@@ -90,11 +101,13 @@ fn tracked(player: &str, stream: &Stream, mut progress: impl FnMut(f64, f64)) ->
                 progress(pos, dur);
             }
         }
-    }
+    };
 
     let _ = std::fs::remove_file(&socket);
     if last_dur > 0.0 {
         progress(last_pos, last_dur);
+    } else if !status.success() {
+        anyhow::bail!("{player} exited before playback started");
     }
     Ok(())
 }
@@ -117,6 +130,15 @@ fn ask(socket: &std::path::Path, property: &str) -> Option<f64> {
         }
     }
     None
+}
+
+#[cfg(unix)]
+fn command(socket: &std::path::Path, args: &str) {
+    use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    if let Ok(mut conn) = UnixStream::connect(socket) {
+        let _ = writeln!(conn, "{{\"command\":{args}}}");
+    }
 }
 
 #[cfg(unix)]
