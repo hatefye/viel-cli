@@ -57,12 +57,16 @@ the best one that answers, in this order:
 | vidbolt (TV only) | LuffyTV | |
 | vidrock | | |
 
-If a source fails, the next one takes over. Anime intros are skipped
-automatically.
+If a source fails, the next one takes over. Playback is capped at 1080p by
+default (`max quality` in settings goes up to 4K). While a stream loads, the
+terminal shows what the relay is fetching and how long it has been waiting.
+Anime intros are skipped automatically.
 
-Downloads fetch eight segments at a time, then remux locally into `.mkv` with
-the subtitle in your language embedded. A full episode usually takes one to
-two minutes.
+Downloads run three episodes at a time (`parallel downloads` in settings),
+eight segments each, under a shared cap of twelve connections so CDNs don't
+start rate-limiting. Each finished file is remuxed locally into `.mkv` with the
+subtitle in your language embedded. A full episode usually takes one to two
+minutes; a ten-episode season a little under five.
 
 ## Configuration
 
@@ -74,6 +78,8 @@ player = "mpv"
 download_dir = "/home/you/Videos/viel"
 subtitle_lang = "en"
 audio = "sub"
+parallel_downloads = 3
+max_height = 1080
 ```
 
 `VIEL_HOST` and `VIEL_PLAYER` override the file. Everything is also editable

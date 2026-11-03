@@ -14,6 +14,10 @@ pub struct Config {
     pub subtitle_lang: String,
     #[serde(default = "default_audio")]
     pub audio: String,
+    #[serde(default = "default_parallel")]
+    pub parallel_downloads: usize,
+    #[serde(default = "default_height")]
+    pub max_height: u32,
 }
 
 impl Default for Config {
@@ -24,12 +28,22 @@ impl Default for Config {
             download_dir: default_download_dir(),
             subtitle_lang: default_subtitle_lang(),
             audio: default_audio(),
+            parallel_downloads: default_parallel(),
+            max_height: default_height(),
         }
     }
 }
 
 fn default_subtitle_lang() -> String {
     "en".into()
+}
+
+fn default_height() -> u32 {
+    1080
+}
+
+fn default_parallel() -> usize {
+    3
 }
 
 fn default_audio() -> String {

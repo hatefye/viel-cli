@@ -1,10 +1,68 @@
 use crate::hls::{self, Part};
 use crate::net;
 use anyhow::{anyhow, Result};
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
+use std::time::Instant;
+
+static MAX_HEIGHT: AtomicU32 = AtomicU32::new(1080);
+static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
+static SERVED: AtomicUsize = AtomicUsize::new(0);
+
+pub fn set_max_height(h: u32) {
+    MAX_HEIGHT.store(h.max(240), Ordering::Relaxed);
+}
+
+fn lang() -> &'static Mutex<String> {
+    static LANG: OnceLock<Mutex<String>> = OnceLock::new();
+    LANG.get_or_init(|| Mutex::new("en".into()))
+}
+
+pub fn set_audio_lang(l: &str) {
+    *lang().lock().unwrap() = l.to_string();
+}
+
+fn current() -> &'static Mutex<Option<(String, Instant)>> {
+    static CUR: OnceLock<Mutex<Option<(String, Instant)>>> = OnceLock::new();
+    CUR.get_or_init(|| Mutex::new(None))
+}
+
+pub struct Activity {
+    pub inflight: usize,
+    pub served: usize,
+    pub fetching: Option<(String, f32)>,
+}
+
+pub fn activity() -> Activity {
+    let fetching = current().lock().unwrap().as_ref().map(|(what, at)| (what.clone(), at.elapsed().as_secs_f32()));
+    Activity { inflight: INFLIGHT.load(Ordering::Relaxed), served: SERVED.load(Ordering::Relaxed), fetching }
+}
+
+pub fn reset_activity() {
+    SERVED.store(0, Ordering::Relaxed);
+    *current().lock().unwrap() = None;
+}
+
+struct Busy;
+
+fn begin(what: String) -> Busy {
+    INFLIGHT.fetch_add(1, Ordering::Relaxed);
+    *current().lock().unwrap() = Some((what, Instant::now()));
+    Busy
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        INFLIGHT.fetch_sub(1, Ordering::Relaxed);
+        SERVED.fetch_add(1, Ordering::Relaxed);
+        if INFLIGHT.load(Ordering::Relaxed) == 0 {
+            *current().lock().unwrap() = None;
+        }
+    }
+}
 
 fn port() -> u16 {
     static PORT: OnceLock<u16> = OnceLock::new();
@@ -50,6 +108,10 @@ fn rewrite(text: &str, base: &str, referer: Option<&str>) -> String {
         Part::Key => link("s", "key.bin", &abs, referer),
         Part::Init => link("s", "init.mp4", &abs, referer),
     })
+}
+
+fn declared_len(resp: &reqwest::blocking::Response) -> Option<u64> {
+    resp.headers().get("content-length")?.to_str().ok()?.trim().parse().ok()
 }
 
 struct Request {
@@ -126,30 +188,65 @@ fn reply(out: &mut TcpStream, status: &str, kind: &str, body: &[u8]) -> io::Resu
 
 fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
     let referer = req.referer.as_deref();
+    let what = match req.route.as_str() {
+        "p" => format!("playlist · {}", net::host(&req.url)),
+        "t" => format!("subtitles · {}", net::host(&req.url)),
+        "v" => format!("video · {}", net::host(&req.url)),
+        _ => format!("{} · {}", req.file.split('.').next().unwrap_or("segment"), net::host(&req.url)),
+    };
+    let _busy = begin(what);
     match req.route.as_str() {
         "p" => {
-            let text = net::text(&req.url, referer)?;
+            let text = net::send_with(&req.url, referer, None, 2)?.text()?;
             if !text.contains("#EXTM3U") {
                 return Err(anyhow!("not a playlist from {}", net::host(&req.url)));
             }
+            let text = if hls::is_master(&text) {
+                hls::trim_master(&text, &req.url, MAX_HEIGHT.load(Ordering::Relaxed), &lang().lock().unwrap()).unwrap_or(text)
+            } else {
+                text
+            };
             reply(out, "200 OK", "application/vnd.apple.mpegurl", rewrite(&text, &req.url, referer).as_bytes())?;
         }
-        "s" | "t" => {
-            let body = net::bytes(&req.url, referer)?;
-            let body = if req.file.ends_with(".ts") { net::unmask_ts(&body) } else { &body[..] };
-            let kind = if req.route == "t" { "text/plain; charset=utf-8" } else { "application/octet-stream" };
-            reply(out, "200 OK", kind, body)?;
+        "t" => {
+            let body = net::send_with(&req.url, referer, None, 2)?.bytes()?;
+            reply(out, "200 OK", "text/plain; charset=utf-8", &body)?;
         }
+        "s" => return stream_segment(out, &req),
         "v" => return stream_video(out, &req),
         _ => reply(out, "404 Not Found", "text/plain", b"not found")?,
     }
     Ok(true)
 }
 
+fn stream_segment(out: &mut TcpStream, req: &Request) -> Result<bool> {
+    let mut resp = net::send_with(&req.url, req.referer.as_deref(), None, 2)?;
+    let mut head = Vec::with_capacity(16384);
+    let mut chunk = [0u8; 16384];
+    while head.len() < 16384 {
+        let n = resp.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        head.extend_from_slice(&chunk[..n]);
+    }
+    let skip = if req.file.ends_with(".ts") { net::ts_offset(&head) } else { 0 };
+    let known = declared_len(&resp).filter(|_| skip == 0);
+    write!(out, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n")?;
+    match known {
+        Some(n) => write!(out, "Content-Length: {n}\r\nConnection: keep-alive\r\n\r\n")?,
+        None => write!(out, "Connection: close\r\n\r\n")?,
+    }
+    out.write_all(&head[skip..])?;
+    io::copy(&mut resp, out)?;
+    out.flush()?;
+    Ok(known.is_some())
+}
+
 fn stream_video(out: &mut TcpStream, req: &Request) -> Result<bool> {
-    let mut resp = net::send(&req.url, req.referer.as_deref(), req.range.as_deref())?;
+    let mut resp = net::send_with(&req.url, req.referer.as_deref(), req.range.as_deref(), 2)?;
     let status = if resp.status().as_u16() == 206 { "206 Partial Content" } else { "200 OK" };
-    let length = resp.content_length();
+    let length = declared_len(&resp);
     write!(out, "HTTP/1.1 {status}\r\nContent-Type: video/mp4\r\nAccept-Ranges: bytes\r\n")?;
     if let Some(range) = resp.headers().get("content-range").and_then(|v| v.to_str().ok()) {
         write!(out, "Content-Range: {range}\r\n")?;

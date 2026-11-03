@@ -35,10 +35,14 @@ fn h2_hosts() -> &'static Mutex<HashSet<String>> {
 }
 
 pub fn send(url: &str, referer: Option<&str>, range: Option<&str>) -> Result<Response> {
+    send_with(url, referer, range, 7)
+}
+
+pub fn send_with(url: &str, referer: Option<&str>, range: Option<&str>, attempts: u32) -> Result<Response> {
     let mut last = None;
     let mut wait = Duration::from_millis(500);
     let mut h2 = h2_hosts().lock().unwrap().contains(host(url));
-    for _ in 0..7 {
+    for _ in 0..attempts {
         let mut req = if h2 { h2_client() } else { client() }.get(url);
         if let Some(r) = referer.filter(|r| !r.is_empty()) {
             req = req.header(REFERER, r);
@@ -92,6 +96,14 @@ pub fn join(base: &str, rel: &str) -> String {
         .and_then(|b| b.join(rel.trim()))
         .map(|u| u.to_string())
         .unwrap_or_else(|_| rel.trim().to_string())
+}
+
+pub fn ts_offset(buf: &[u8]) -> usize {
+    if buf.len() > 376 && buf[0] == 0x47 && buf[188] == 0x47 {
+        return 0;
+    }
+    let limit = buf.len().saturating_sub(376).min(8192);
+    (0..limit).find(|&i| buf[i] == 0x47 && buf[i + 188] == 0x47 && buf[i + 376] == 0x47).unwrap_or(0)
 }
 
 pub fn unmask_ts(buf: &[u8]) -> &[u8] {

@@ -167,3 +167,28 @@ pub fn pick_audio(tracks: Vec<Rendition>, lang: &str) -> Option<Rendition> {
         .or(if tracks.is_empty() { None } else { Some(0) })?;
     Some(tracks.swap_remove(idx))
 }
+
+pub fn trim_master(text: &str, base: &str, max_height: u32, lang: &str) -> Option<String> {
+    let variant = best(variants(text, base), max_height)?;
+    let mut out = vec!["#EXTM3U".to_string(), "#EXT-X-VERSION:3".to_string()];
+    let mut inf = variant.inf.clone();
+    if let Some(group) = &variant.audio {
+        if let Some(track) = pick_audio(audio_tracks(text, base, group), lang) {
+            let line = track.line.replace(&format!("URI=\"{}\"", raw_uri(&track.line)), &format!("URI=\"{}\"", track.url));
+            out.push(line);
+        }
+    }
+    inf = inf
+        .split(',')
+        .filter(|kv| !kv.starts_with("SUBTITLES=") && !kv.starts_with("CLOSED-CAPTIONS="))
+        .collect::<Vec<_>>()
+        .join(",");
+    out.push(inf);
+    out.push(variant.url);
+    out.push(String::new());
+    Some(out.join("\n"))
+}
+
+pub fn raw_uri(line: &str) -> &str {
+    line.split("URI=\"").nth(1).and_then(|r| r.split('"').next()).unwrap_or("")
+}

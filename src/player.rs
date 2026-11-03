@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub struct Watched {
     pub position: f64,
@@ -26,7 +26,7 @@ pub fn play(player: &str, stream: &Stream, mut progress: impl FnMut(f64, f64)) -
     let referer = stream.referer.as_deref();
     cmd.arg(if stream.hls { relay::playlist(&stream.url, referer) } else { relay::video(&stream.url, referer) });
     cmd.arg(format!("--force-media-title={}", stream.title));
-    cmd.arg("--force-window=yes");
+    cmd.arg("--force-window=immediate");
     cmd.arg("--hls-bitrate=max");
     cmd.arg(format!("--input-ipc-server={}", socket.display()));
     for sub in &stream.subs {
@@ -45,9 +45,23 @@ pub fn play(player: &str, stream: &Stream, mut progress: impl FnMut(f64, f64)) -
     let mut last = Watched { position: 0.0, duration: 0.0 };
     let mut elapsed = 0u64;
     let mut skipped = stream.intro.is_none();
+    let launched = Instant::now();
+    let mut started = false;
+    relay::reset_activity();
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
+        }
+        if !started {
+            if ask(&socket, "time-pos").is_some_and(|p| p > 0.0) {
+                started = true;
+                print!("\r\x1b[2K  ▶ started after {:.0}s\n", launched.elapsed().as_secs_f32());
+            } else {
+                let a = relay::activity();
+                let what = a.fetching.map(|(w, t)| format!("{w} · {t:.0}s")).unwrap_or_else(|| "waiting for mpv".into());
+                print!("\r\x1b[2K  loading {:.0}s · {} parts · {what}", launched.elapsed().as_secs_f32(), a.served);
+            }
+            let _ = std::io::stdout().flush();
         }
         sleep(Duration::from_millis(500));
         elapsed += 500;

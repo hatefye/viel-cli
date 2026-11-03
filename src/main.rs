@@ -65,6 +65,8 @@ enum Setting {
     Downloads,
     Subtitle,
     Audio,
+    Parallel,
+    Quality,
     Back,
 }
 
@@ -76,6 +78,8 @@ impl fmt::Display for Setting {
             Setting::Downloads => "download folder",
             Setting::Subtitle => "default subtitle language",
             Setting::Audio => "default anime audio (sub/dub)",
+            Setting::Parallel => "parallel downloads",
+            Setting::Quality => "max quality",
             Setting::Back => "back",
         };
         f.write_str(label)
@@ -126,6 +130,8 @@ fn app() -> Result<()> {
     ui::theme();
     let mut cfg = Config::load()?;
     ensure_player(&mut cfg);
+    viel::relay::set_max_height(cfg.max_height);
+    viel::relay::set_audio_lang(&cfg.subtitle_lang);
     let mut api = Api::new(&cfg.host, config::session());
     let mut user = api.me().unwrap_or(None);
     let trending: Arc<Mutex<Option<Vec<Title>>>> = Arc::default();
@@ -535,8 +541,10 @@ fn settings(cfg: &mut Config) -> Result<()> {
         println!("player command:    {}", cfg.player);
         println!("download folder:   {}", cfg.download_dir);
         println!("subtitle language: {}", cfg.subtitle_lang);
-        println!("anime audio:       {}\n", cfg.audio);
-        let options = vec![Setting::Host, Setting::Player, Setting::Downloads, Setting::Subtitle, Setting::Audio, Setting::Back];
+        println!("anime audio:       {}", cfg.audio);
+        println!("parallel downloads: {}", cfg.parallel_downloads);
+        println!("max quality:       {}p\n", cfg.max_height);
+        let options = vec![Setting::Host, Setting::Player, Setting::Downloads, Setting::Subtitle, Setting::Audio, Setting::Parallel, Setting::Quality, Setting::Back];
         match ui::select("settings", options)? {
             Some(Setting::Host) => edit_field(&mut cfg.host, "server host (e.g. https://viel.tv)")?,
             Some(Setting::Player) => edit_field(&mut cfg.player, "player command or full path")?,
@@ -545,6 +553,17 @@ fn settings(cfg: &mut Config) -> Result<()> {
             Some(Setting::Audio) => {
                 if let Some(choice) = ui::select("default anime audio", vec!["sub", "dub"])? {
                     cfg.audio = choice.to_string();
+                }
+            }
+            Some(Setting::Parallel) => {
+                if let Some(n) = ui::select("episodes at once", vec![1usize, 2, 3, 4, 6])? {
+                    cfg.parallel_downloads = n;
+                }
+            }
+            Some(Setting::Quality) => {
+                if let Some(h) = ui::select("max quality", vec![720u32, 1080, 1440, 2160])? {
+                    cfg.max_height = h;
+                    viel::relay::set_max_height(h);
                 }
             }
             Some(Setting::Back) | None => return Ok(()),
