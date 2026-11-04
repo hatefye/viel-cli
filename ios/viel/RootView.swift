@@ -8,6 +8,7 @@ struct RootView: View {
     @State private var selected: Title?
     @State private var resume: Resume?
     @State private var playing: Playable?
+    @State private var searching = false
 
     var body: some View {
         NavigationStack {
@@ -48,19 +49,23 @@ struct RootView: View {
                 .environmentObject(core)
         }
         .fullScreenCover(item: $playing) { PlayerView(item: $0).environmentObject(core) }
+        .fullScreenCover(isPresented: $searching) { SearchView().environmentObject(core) }
     }
 
     private var header: some View {
         HStack {
-            Text("Viel")
-                .font(.system(size: 30, weight: .heavy))
-                .foregroundStyle(.white)
-                .shadow(color: .black.opacity(0.5), radius: 6, y: 2)
             Spacer()
+            Button {
+                Haptic.tap()
+                searching = true
+            } label: {
+                RoundIcon(icon: "magnifyingglass", size: 42)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
-        .allowsHitTesting(false)
     }
 
     private var hero: some View {
