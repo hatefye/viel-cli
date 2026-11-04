@@ -7,7 +7,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 static MAX_HEIGHT: AtomicU32 = AtomicU32::new(1080);
 static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
@@ -77,10 +77,44 @@ impl Drop for Busy {
     }
 }
 
+pub fn token() -> &'static str {
+    static TOKEN: OnceLock<String> = OnceLock::new();
+    TOKEN.get_or_init(|| {
+        use std::hash::{BuildHasher, Hasher};
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u128(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0),
+        );
+        hasher.write_u32(std::process::id());
+        let a = hasher.finish();
+        hasher.write_u64(a.rotate_left(17));
+        format!("{a:016x}{:016x}", hasher.finish())
+    })
+}
+
+fn lan_host() -> &'static Mutex<Option<String>> {
+    static LAN: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+    LAN.get_or_init(|| Mutex::new(None))
+}
+
+pub fn set_lan_host(host: Option<String>) {
+    *lan_host().lock().unwrap() = host.filter(|h| !h.trim().is_empty() && !h.contains('/'));
+}
+
+pub fn media_host() -> String {
+    match lan_host().lock().unwrap().as_deref() {
+        Some(h) => format!("{h}:{}", port()),
+        None => format!("127.0.0.1:{}", port()),
+    }
+}
+
 pub fn port() -> u16 {
     static PORT: OnceLock<u16> = OnceLock::new();
     *PORT.get_or_init(|| {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind relay");
+        let listener = TcpListener::bind("0.0.0.0:0").expect("bind relay");
         let port = listener.local_addr().expect("relay addr").port();
         thread::spawn(move || {
             for conn in listener.incoming().flatten() {
@@ -93,11 +127,11 @@ pub fn port() -> u16 {
     })
 }
 
-fn link(route: &str, file: &str, url: &str, referer: Option<&str>) -> String {
+fn link(host: &str, route: &str, file: &str, url: &str, referer: Option<&str>) -> String {
     let mut out = format!(
-        "http://127.0.0.1:{}/{route}/{file}?u={}",
-        port(),
-        urlencoding::encode(url)
+        "http://{host}/{route}/{file}?u={}&k={}",
+        urlencoding::encode(url),
+        token()
     );
     if let Some(r) = referer.filter(|r| !r.is_empty()) {
         out.push_str("&r=");
@@ -106,24 +140,36 @@ fn link(route: &str, file: &str, url: &str, referer: Option<&str>) -> String {
     out
 }
 
+fn local_host() -> String {
+    format!("127.0.0.1:{}", port())
+}
+
 pub fn playlist(url: &str, referer: Option<&str>) -> String {
-    link("p", "index.m3u8", url, referer)
+    link(&local_host(), "p", "index.m3u8", url, referer)
+}
+
+pub fn media(url: &str, referer: Option<&str>, hls: bool) -> String {
+    if hls {
+        link(&media_host(), "p", "index.m3u8", url, referer)
+    } else {
+        link(&media_host(), "v", "video.mp4", url, referer)
+    }
 }
 
 pub fn video(url: &str, referer: Option<&str>) -> String {
-    link("v", "video.mp4", url, referer)
+    link(&local_host(), "v", "video.mp4", url, referer)
 }
 
 pub fn subtitle(url: &str, referer: Option<&str>) -> String {
-    link("t", "sub", url, referer)
+    link(&local_host(), "t", "sub", url, referer)
 }
 
-fn rewrite(text: &str, base: &str, referer: Option<&str>) -> String {
+fn rewrite(host: &str, text: &str, base: &str, referer: Option<&str>) -> String {
     hls::rewrite(text, base, |part, abs| match part {
-        Part::Playlist => playlist(&abs, referer),
-        Part::Segment(ext) => link("s", &format!("seg.{ext}"), &abs, referer),
-        Part::Key => link("s", "key.bin", &abs, referer),
-        Part::Init => link("s", "init.mp4", &abs, referer),
+        Part::Playlist => link(host, "p", "index.m3u8", &abs, referer),
+        Part::Segment(ext) => link(host, "s", &format!("seg.{ext}"), &abs, referer),
+        Part::Key => link(host, "s", "key.bin", &abs, referer),
+        Part::Init => link(host, "s", "init.mp4", &abs, referer),
     })
 }
 
@@ -143,6 +189,8 @@ struct Request {
     query: HashMap<String, String>,
     body: Vec<u8>,
     range: Option<String>,
+    host: String,
+    local: bool,
 }
 
 impl Request {
@@ -171,6 +219,10 @@ fn parse(line: &str) -> Option<(String, String, HashMap<String, String>)> {
 }
 
 fn serve(conn: TcpStream) -> Result<()> {
+    let local = conn
+        .peer_addr()
+        .map(|a| a.ip().is_loopback())
+        .unwrap_or(false);
     let mut reader = BufReader::new(conn.try_clone()?);
     let mut out = conn;
     loop {
@@ -179,6 +231,7 @@ fn serve(conn: TcpStream) -> Result<()> {
             return Ok(());
         }
         let mut range = None;
+        let mut host = String::new();
         let mut length = 0usize;
         let mut close = line.contains("HTTP/1.0");
         loop {
@@ -189,6 +242,12 @@ fn serve(conn: TcpStream) -> Result<()> {
             let lower = header.to_ascii_lowercase();
             if let Some(v) = lower.strip_prefix("range:") {
                 range = Some(v.trim().to_string());
+            }
+            if let Some(v) = header
+                .strip_prefix("Host:")
+                .or_else(|| header.strip_prefix("host:"))
+            {
+                host = v.trim().to_string();
             }
             if let Some(v) = lower.strip_prefix("content-length:") {
                 length = v.trim().parse().unwrap_or(0);
@@ -210,6 +269,8 @@ fn serve(conn: TcpStream) -> Result<()> {
                     query,
                     body,
                     range,
+                    host: if host.is_empty() { local_host() } else { host },
+                    local,
                 },
             ),
             None => reply(&mut out, "400 Bad Request", "text/plain", b"bad request")
@@ -265,6 +326,10 @@ fn reply(out: &mut TcpStream, status: &str, kind: &str, body: &[u8]) -> io::Resu
 fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
     let trimmed = req.path.trim_start_matches('/');
     let (route, file) = trimmed.split_once('/').unwrap_or((trimmed, ""));
+    if !req.local && (route == "api" || req.param("k") != Some(token())) {
+        reply(out, "403 Forbidden", "text/plain", b"forbidden")?;
+        return Ok(true);
+    }
     if route == "api" {
         let (status, kind, body) = local::handle(&req.method, file, &req.query, &req.body);
         reply(out, status, kind, &body)?;
@@ -314,7 +379,7 @@ fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
                 out,
                 "200 OK",
                 "application/vnd.apple.mpegurl",
-                rewrite(&text, url, referer).as_bytes(),
+                rewrite(&req.host, &text, url, referer).as_bytes(),
             )?;
         }
         "t" => {

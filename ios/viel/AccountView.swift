@@ -50,6 +50,27 @@ struct AccountView: View {
                 }
 
                 Section {
+                    Picker("Download quality", selection: $core.settings.downloadHeight) {
+                        ForEach(qualities, id: \.self) { quality in
+                            Text(quality == 2160 ? "4K" : "\(quality)p").tag(quality)
+                        }
+                    }
+                    Toggle("Delete downloads after watching", isOn: $core.settings.autoDeleteWatched)
+                } header: {
+                    Text("Downloads")
+                } footer: {
+                    Text("Downloads keep going in the background and show up under Files → viel → Downloads.")
+                }
+
+                Section {
+                    Toggle("Stream to AirPlay devices", isOn: $core.settings.airplay)
+                } header: {
+                    Text("AirPlay")
+                } footer: {
+                    Text("Lets an Apple TV pull the video straight from this phone over Wi-Fi instead of mirroring the screen. Turn it off if playback stalls when switching networks.")
+                }
+
+                Section {
                     TextField("Server", text: $core.settings.host)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -75,6 +96,7 @@ struct AccountView: View {
             }
             .onChange(of: core.settings.maxHeight) { _, _ in Task { await core.pushSettings() } }
             .onChange(of: core.settings.subtitleLang) { _, _ in Task { await core.pushSettings() } }
+            .onChange(of: core.settings.airplay) { _, _ in Task { await core.pushSettings() } }
         }
     }
 

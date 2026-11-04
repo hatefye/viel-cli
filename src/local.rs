@@ -97,6 +97,7 @@ struct State {
     api: Api,
     host: String,
     subtitle_lang: String,
+    audio_lang: Option<String>,
 }
 
 fn state() -> &'static RwLock<State> {
@@ -106,6 +107,7 @@ fn state() -> &'static RwLock<State> {
             api: Api::new("https://viel.tv", None),
             host: "https://viel.tv".into(),
             subtitle_lang: "en".into(),
+            audio_lang: None,
         })
     })
 }
@@ -246,16 +248,61 @@ fn route(
         ("GET", "offline") => {
             offline::playback(&q("key")).ok_or_else(|| anyhow::anyhow!("download not found"))?
         }
-        ("POST", "downloads") => {
+        ("POST", "downloads/plan") => {
             let d: DownloadIn = serde_json::from_slice(body)?;
+            let height = d.max_height.unwrap_or_else(relay::max_height);
             let streams = resolve_streams(&api, &lang, d.play)?;
-            offline::enqueue(&d.key, d.meta, streams, relay::max_height(), &lang)?;
+            offline::plan(&d.key, d.meta, &streams, height, &lang)?
+        }
+        ("POST", "downloads/finish") => {
+            let d: KeyIn = serde_json::from_slice(body)?;
+            offline::finish(&d.key)?
+        }
+        ("POST", "downloads/fail") => {
+            let d: KeyIn = serde_json::from_slice(body)?;
+            offline::fail(&d.key, d.error.as_deref().unwrap_or("download failed"))?;
             json!({ "ok": true })
         }
         ("POST", "downloads/remove") => {
             let d: KeyIn = serde_json::from_slice(body)?;
             offline::remove(&d.key)?;
             json!({ "ok": true })
+        }
+        ("GET", "audio") => audio_tracks(&q("url"))?,
+        ("GET", "watchlist") => {
+            let rows: Vec<Value> = api
+                .watchlist()?
+                .into_iter()
+                .filter_map(|w| {
+                    let id: u64 = w.content_id.parse().ok()?;
+                    Some(json!({ "id": id, "kind": w.kind, "name": w.title, "poster": poster_url(&host, Some(&w.poster)) }))
+                })
+                .collect();
+            json!(rows)
+        }
+        ("POST", "watchlist") => {
+            let w: WatchIn = serde_json::from_slice(body)?;
+            api.add_watchlist(&w.kind, w.id, &w.name, w.poster.as_deref())?;
+            json!({ "ok": true })
+        }
+        ("POST", "watchlist/remove") => {
+            let w: RemoveIn = serde_json::from_slice(body)?;
+            api.remove_watchlist(&w.kind, w.id)?;
+            json!({ "ok": true })
+        }
+        ("GET", "recommendations") => {
+            let rows: Vec<TitleOut> = api
+                .recommendations()
+                .unwrap_or_default()
+                .into_iter()
+                .take(20)
+                .map(|t| title_out(&host, t))
+                .collect();
+            json!(rows)
+        }
+        ("GET", "trailer") => {
+            let kind = parse_kind(&q("kind"))?;
+            json!({ "url": api.trailer(kind, q("id").parse().unwrap_or(0)) })
         }
         ("POST", "progress") => {
             let p: Progress = serde_json::from_slice(body)?;
@@ -305,8 +352,24 @@ fn route(
                 relay::set_max_height(h);
             }
             if let Some(l) = s.subtitle_lang.filter(|l| !l.trim().is_empty()) {
-                relay::set_audio_lang(&l);
+                if state().read().unwrap().audio_lang.is_none() {
+                    relay::set_audio_lang(&l);
+                }
                 state().write().unwrap().subtitle_lang = l;
+            }
+            if let Some(a) = s.audio_lang {
+                let a = a.trim().to_string();
+                if a.is_empty() {
+                    let fallback = state().read().unwrap().subtitle_lang.clone();
+                    relay::set_audio_lang(&fallback);
+                    state().write().unwrap().audio_lang = None;
+                } else {
+                    relay::set_audio_lang(&a);
+                    state().write().unwrap().audio_lang = Some(a);
+                }
+            }
+            if let Some(h) = s.lan_host {
+                relay::set_lan_host(Some(h));
             }
             json!({ "ok": true })
         }
@@ -463,11 +526,22 @@ struct DownloadIn {
     key: String,
     #[serde(default)]
     meta: Value,
+    max_height: Option<u32>,
 }
 
 #[derive(Deserialize)]
 struct KeyIn {
     key: String,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct WatchIn {
+    kind: String,
+    id: u64,
+    #[serde(default)]
+    name: String,
+    poster: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -487,6 +561,8 @@ struct HistoryOut {
 struct Settings {
     max_height: Option<u32>,
     subtitle_lang: Option<String>,
+    audio_lang: Option<String>,
+    lan_host: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -785,6 +861,47 @@ fn resolve_streams(api: &Api, lang: &str, p: PlayIn) -> Result<Vec<Stream>> {
     Ok(streams)
 }
 
+fn audio_tracks(link: &str) -> Result<Value> {
+    let query: HashMap<String, String> = link
+        .split_once('?')
+        .map(|(_, q)| q)
+        .unwrap_or("")
+        .split('&')
+        .filter_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            Some((k.to_string(), urlencoding::decode(v).ok()?.into_owned()))
+        })
+        .collect();
+    let url = query.get("u").cloned().unwrap_or_default();
+    if url.is_empty() {
+        bail!("missing stream");
+    }
+    let text = crate::net::text(&url, query.get("r").map(String::as_str))?;
+    if !crate::hls::is_master(&text) {
+        return Ok(json!([]));
+    }
+    let mut seen = Vec::new();
+    let mut rows = Vec::new();
+    for variant in crate::hls::variants(&text, &url) {
+        let Some(group) = variant.audio.as_deref() else {
+            continue;
+        };
+        for track in crate::hls::audio_tracks(&text, &url, group) {
+            let tag = if track.lang.is_empty() {
+                track.name.clone()
+            } else {
+                track.lang.clone()
+            };
+            if tag.is_empty() || seen.contains(&tag) {
+                continue;
+            }
+            seen.push(tag.clone());
+            rows.push(json!({ "lang": tag, "name": track.name, "default": track.default }));
+        }
+    }
+    Ok(json!(rows))
+}
+
 fn history(api: &Api, host: &str) -> Value {
     let entries = api.history().unwrap_or_default();
     let mut keys: Vec<(String, u64)> = Vec::new();
@@ -866,11 +983,7 @@ fn with_subs(api: &Api, lang: &str, path: &str, mut streams: Vec<Stream>) -> Vec
 
 fn stream_out(s: Stream, lang: &str) -> StreamOut {
     let referer = s.referer.as_deref();
-    let url = if s.hls {
-        relay::playlist(&s.url, referer)
-    } else {
-        relay::video(&s.url, referer)
-    };
+    let url = relay::media(&s.url, referer, s.hls);
     let mut subs = s.subs.clone();
     subs.sort_by_key(|x| !api::lang_matches(&x.lang, lang));
     StreamOut {

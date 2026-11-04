@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import UIKit
 
 struct Settings: Codable {
@@ -10,6 +11,10 @@ struct Settings: Codable {
     var subSize = 1.0
     var subBackground = true
     var subLift = 0.0
+    var downloadHeight = 1080
+    var autoDeleteWatched = false
+    var airplay = false
+    var audioLang = ""
 
     init() {}
 
@@ -23,6 +28,10 @@ struct Settings: Codable {
         subSize = try box.decodeIfPresent(Double.self, forKey: .subSize) ?? subSize
         subBackground = try box.decodeIfPresent(Bool.self, forKey: .subBackground) ?? subBackground
         subLift = try box.decodeIfPresent(Double.self, forKey: .subLift) ?? subLift
+        downloadHeight = try box.decodeIfPresent(Int.self, forKey: .downloadHeight) ?? downloadHeight
+        autoDeleteWatched = try box.decodeIfPresent(Bool.self, forKey: .autoDeleteWatched) ?? autoDeleteWatched
+        airplay = try box.decodeIfPresent(Bool.self, forKey: .airplay) ?? airplay
+        audioLang = try box.decodeIfPresent(String.self, forKey: .audioLang) ?? audioLang
     }
 
     static func load() -> Settings {
@@ -56,7 +65,9 @@ final class Core: ObservableObject {
     let device: String
     let build: String
     let downloadsDir: URL
+    nonisolated static let downloadsRoot: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent("Downloads", isDirectory: true)
     private var keepAlive: UIBackgroundTaskIdentifier = .invalid
+    private let monitor = NWPathMonitor()
     @Published var username: String?
     @Published var settings: Settings {
         didSet { settings.save() }
@@ -69,8 +80,7 @@ final class Core: ObservableObject {
         let settings = Settings.load()
         self.settings = settings
         let token = UserDefaults.standard.string(forKey: "token") ?? ""
-        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        downloadsDir = documents.appendingPathComponent("Downloads", isDirectory: true)
+        downloadsDir = Core.downloadsRoot
         port = viel_start(settings.host, token, downloadsDir.path)
         let stored = UserDefaults.standard.string(forKey: "device") ?? String(UUID().uuidString.prefix(8)).lowercased()
         UserDefaults.standard.set(stored, forKey: "device")
@@ -80,7 +90,34 @@ final class Core: ObservableObject {
         Task {
             await pushSettings()
             await refreshUser()
+            DownloadManager.shared.activate()
+            await DownloadManager.shared.resume(core: self)
+            await Watchlist.shared.sync(core: self)
         }
+        monitor.pathUpdateHandler = { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.settings.airplay else { return }
+                await self.pushSettings()
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "tv.viel.network"))
+    }
+
+    nonisolated static func wifiAddress() -> String? {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return nil }
+        defer { freeifaddrs(list) }
+        var found: String?
+        for entry in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            guard let addr = entry.pointee.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let flags = Int32(entry.pointee.ifa_flags)
+            guard flags & IFF_UP != 0, flags & IFF_LOOPBACK == 0, String(cString: entry.pointee.ifa_name) == "en0" else { continue }
+            var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(addr, socklen_t(addr.pointee.sa_len), &host, socklen_t(host.count), nil, 0, NI_NUMERICHOST) == 0 {
+                found = String(cString: host)
+            }
+        }
+        return found
     }
 
     private var base: String { "http://127.0.0.1:\(port)/api/" }
@@ -122,6 +159,7 @@ final class Core: ObservableObject {
         UserDefaults.standard.set(reply.token, forKey: "token")
         self.username = reply.username
         log("app", "signed in")
+        await Watchlist.shared.sync(core: self)
     }
 
     func logout() async {
@@ -142,8 +180,45 @@ final class Core: ObservableObject {
         struct Body: Encodable {
             let max_height: Int
             let subtitle_lang: String
+            let audio_lang: String
+            let lan_host: String
         }
-        let _: Ok? = try? await post("settings", Body(max_height: settings.maxHeight, subtitle_lang: settings.subtitleLang))
+        let lan = settings.airplay ? (Core.wifiAddress() ?? "") : ""
+        let _: Ok? = try? await post("settings", Body(max_height: settings.maxHeight, subtitle_lang: settings.subtitleLang, audio_lang: settings.audioLang, lan_host: lan))
+    }
+
+    func audioTracks(for url: String) async -> [AudioTrack] {
+        (try? await get("audio", ["url": url])) ?? []
+    }
+
+    func recommendations() async -> [Title] {
+        guard username != nil else { return [] }
+        return (try? await get("recommendations")) ?? []
+    }
+
+    func trailer(kind: String, id: UInt64) async -> URL? {
+        struct Reply: Decodable {
+            let url: String?
+        }
+        let reply: Reply? = try? await get("trailer", ["kind": kind, "id": String(id)])
+        return reply?.url.flatMap { URL(string: $0) }
+    }
+
+    func remoteWatchlist() async -> [Title]? {
+        guard username != nil else { return nil }
+        let rows: [WatchRow]? = try? await get("watchlist")
+        return rows?.map(\.title)
+    }
+
+    func setWatch(_ title: Title, on: Bool) async {
+        guard username != nil else { return }
+        struct Body: Encodable {
+            let kind: String
+            let id: UInt64
+            let name: String
+            let poster: String?
+        }
+        let _: Ok? = try? await post(on ? "watchlist" : "watchlist/remove", Body(kind: title.kind, id: title.id, name: title.name, poster: title.poster))
     }
 
     func saveProgress(_ progress: Progress) async {
@@ -160,13 +235,11 @@ final class Core: ObservableObject {
     }
 
     func download(_ item: Playable) async throws {
-        let request = item.request
-        let body = DownloadRequest(kind: request.kind, id: request.id, title: request.title, season: request.season, episode: request.episode, dub: request.dub, sources: request.sources, key: item.downloadKey, meta: item.downloadMeta)
-        let _: Ok = try await post("downloads", body)
-        log("download", "queued \(item.downloadKey)")
+        try await DownloadManager.shared.start(item, core: self)
     }
 
     func removeDownload(_ key: String) async {
+        await DownloadManager.shared.cancel(key)
         let _: Ok? = try? await post("downloads/remove", ["key": key])
         log("download", "removed \(key)")
     }
@@ -187,7 +260,6 @@ final class Core: ObservableObject {
             keepAlive = UIApplication.shared.beginBackgroundTask(withName: "downloads") { [weak self] in
                 self?.endKeepAlive()
             }
-            log("download", "continuing in background")
         }
     }
 

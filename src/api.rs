@@ -899,6 +899,96 @@ impl Api {
         Ok(())
     }
 
+    pub fn watchlist(&self) -> Result<Vec<WatchEntry>> {
+        let url = format!("{}/api/me/watchlist", self.host);
+        let resp = self.authed(self.client.get(url)).send()?;
+        if !resp.status().is_success() {
+            bail!("not signed in");
+        }
+        Ok(resp.json::<WatchResp>()?.items)
+    }
+
+    pub fn add_watchlist(
+        &self,
+        kind: &str,
+        id: u64,
+        title: &str,
+        poster: Option<&str>,
+    ) -> Result<()> {
+        let url = format!("{}/api/me/watchlist", self.host);
+        let body = serde_json::json!({ "type": kind, "content_id": id.to_string(), "title": title, "poster": poster.unwrap_or("") });
+        let resp = self.authed(self.client.post(url)).json(&body).send()?;
+        if !resp.status().is_success() {
+            bail!("could not save ({})", resp.status());
+        }
+        Ok(())
+    }
+
+    pub fn remove_watchlist(&self, kind: &str, id: u64) -> Result<()> {
+        let url = format!("{}/api/me/watchlist/{}/{}", self.host, kind, id);
+        let resp = self.authed(self.client.delete(url)).send()?;
+        if !resp.status().is_success() {
+            bail!("could not remove ({})", resp.status());
+        }
+        Ok(())
+    }
+
+    pub fn recommendations(&self) -> Result<Vec<Title>> {
+        let url = format!("{}/api/me/recommendations", self.host);
+        let resp = self.authed(self.client.get(url)).send()?;
+        if !resp.status().is_success() {
+            return Ok(Vec::new());
+        }
+        Ok(resp
+            .json::<RecResp>()?
+            .items
+            .into_iter()
+            .map(|r| {
+                let kind = if r.kind == "tv" {
+                    Kind::Tv
+                } else {
+                    Kind::Movie
+                };
+                let mut t = Title::bare(r.id, kind, r.title, r.poster_path);
+                t.year = r
+                    .release_date
+                    .or(r.first_air_date)
+                    .unwrap_or_default()
+                    .chars()
+                    .take(4)
+                    .collect();
+                t.rating = r.vote_average.unwrap_or(0.0);
+                t.overview = r.overview;
+                t.backdrop_path = r.backdrop_path;
+                t
+            })
+            .collect())
+    }
+
+    pub fn trailer(&self, kind: Kind, id: u64) -> Option<String> {
+        if kind == Kind::Anime {
+            let url = format!("{}/miruro/info/{}", self.host, id);
+            let info: AnimeTrailerResp = self.client.get(url).send().ok()?.json().ok()?;
+            let t = info.trailer?;
+            let key = t.id.trim();
+            return (!key.is_empty() && t.site.eq_ignore_ascii_case("youtube"))
+                .then(|| format!("https://www.youtube.com/watch?v={key}"));
+        }
+        let url = format!("{}/proxy/tmdb/{}/{}/videos", self.host, kind.slug(), id);
+        let resp: VideosResp = self.client.get(url).send().ok()?.json().ok()?;
+        let youtube: Vec<&VideoRaw> = resp
+            .results
+            .iter()
+            .filter(|v| v.site.eq_ignore_ascii_case("youtube") && !v.key.is_empty())
+            .collect();
+        let pick = youtube
+            .iter()
+            .find(|v| v.kind == "Trailer")
+            .or_else(|| youtube.iter().find(|v| v.kind == "Teaser"))
+            .or_else(|| youtube.first())?;
+        Some(format!("https://www.youtube.com/watch?v={}", pick.key))
+    }
+
     pub fn remove_history(&self, kind: &str, id: u64) -> Result<()> {
         let url = format!("{}/api/me/history/{}/{}", self.host, kind, id);
         let resp = self.authed(self.client.delete(url)).send()?;
@@ -1266,6 +1356,72 @@ struct Extractor {
 #[derive(Deserialize)]
 struct HistoryResp {
     items: Vec<HistoryEntry>,
+}
+
+#[derive(Deserialize)]
+struct WatchResp {
+    items: Vec<WatchEntry>,
+}
+
+#[derive(Deserialize)]
+pub struct WatchEntry {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub content_id: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub poster: String,
+}
+
+#[derive(Deserialize)]
+struct RecResp {
+    #[serde(default)]
+    items: Vec<RecRaw>,
+}
+
+#[derive(Deserialize)]
+struct RecRaw {
+    #[serde(rename = "type")]
+    kind: String,
+    id: u64,
+    #[serde(default)]
+    title: String,
+    poster_path: Option<String>,
+    backdrop_path: Option<String>,
+    vote_average: Option<f64>,
+    release_date: Option<String>,
+    first_air_date: Option<String>,
+    overview: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct VideosResp {
+    #[serde(default)]
+    results: Vec<VideoRaw>,
+}
+
+#[derive(Deserialize)]
+struct VideoRaw {
+    #[serde(default)]
+    site: String,
+    #[serde(default)]
+    key: String,
+    #[serde(rename = "type", default)]
+    kind: String,
+}
+
+#[derive(Deserialize)]
+struct AnimeTrailerResp {
+    trailer: Option<AnimeTrailer>,
+}
+
+#[derive(Deserialize)]
+struct AnimeTrailer {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    site: String,
 }
 
 #[derive(Deserialize)]

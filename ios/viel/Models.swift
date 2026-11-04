@@ -370,6 +370,28 @@ struct DownloadRequest: Encodable {
     let sources: [Source]
     let key: String
     let meta: DownloadMeta
+    let max_height: Int
+}
+
+struct AudioTrack: Decodable, Hashable {
+    let lang: String
+    let name: String
+    let `default`: Bool
+
+    var label: String {
+        let pretty = Sub(lang: lang, url: "").label
+        if pretty.lowercased() == "subtitle" || pretty.lowercased() == lang.lowercased() { return name.isEmpty ? lang : name }
+        return name.isEmpty || name.lowercased() == pretty.lowercased() ? pretty : "\(pretty) · \(name)"
+    }
+}
+
+struct WatchRow: Decodable {
+    let id: UInt64
+    let kind: String
+    let name: String
+    let poster: String?
+
+    var title: Title { Title.bare(id: id, kind: kind, name: name, poster: poster) }
 }
 
 struct Download: Decodable, Hashable, Identifiable {

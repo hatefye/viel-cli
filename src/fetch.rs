@@ -29,6 +29,17 @@ pub fn mirror(
     progress: &(dyn Fn(Progress) + Sync),
     stop: &(dyn Fn() -> bool + Sync),
 ) -> Result<String> {
+    let (main, tasks) = prepare(stream, work, max_height, lang)?;
+    fetch_all(&tasks, stream.referer.as_deref(), progress, stop)?;
+    Ok(main)
+}
+
+pub fn prepare(
+    stream: &Stream,
+    work: &Path,
+    max_height: u32,
+    lang: &str,
+) -> Result<(String, Vec<Task>)> {
     let referer = stream.referer.as_deref();
     let mut tasks = Vec::new();
     let text = net::text(&stream.url, referer)?;
@@ -59,8 +70,7 @@ pub fn mirror(
     } else {
         localize_text(&text, &stream.url, work, "v", &mut tasks)?
     };
-    fetch_all(&tasks, referer, progress, stop)?;
-    Ok(main)
+    Ok((main, tasks))
 }
 
 pub fn save_subtitle(stream: &Stream, lang: &str, work: &Path) -> Option<PathBuf> {

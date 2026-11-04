@@ -71,6 +71,9 @@ struct PlayerView: View {
         }
         .onChange(of: model.finished) { _, done in
             guard done else { return }
+            if let key = current.offline, core.settings.autoDeleteWatched {
+                Task { await core.removeDownload(key) }
+            }
             if core.settings.autoplay, !dismissedNext, let next = current.next {
                 Task { await start(next) }
             } else {
@@ -705,7 +708,6 @@ struct PlayerSurface: UIViewRepresentable {
         let view = PlayerLayerView()
         view.backgroundColor = .black
         view.playerLayer.player = model.player
-        model.player.allowsExternalPlayback = false
         view.playerLayer.videoGravity = fill ? .resizeAspectFill : .resizeAspect
         if AVPictureInPictureController.isPictureInPictureSupported(), let pip = AVPictureInPictureController(playerLayer: view.playerLayer) {
             pip.canStartPictureInPictureAutomaticallyFromInline = true
@@ -914,6 +916,26 @@ final class PlayerModel: ObservableObject {
         attach(index)
     }
 
+    func reattach() {
+        guard streams.indices.contains(streamIndex) else { return }
+        startAt = position > 1 ? position : nil
+        log("reattach \(streams[streamIndex].source)")
+        attach(streamIndex)
+    }
+
+    func report() {
+        let place = item?.heading ?? "?"
+        let via = stream?.source ?? "none"
+        log("USER REPORT: \(place) via \(via) at \(Int(position))s, \(status ?? (isPlaying ? "playing" : "paused")), \(errorSummaryText)")
+        Task { await core?.flushLogs() }
+    }
+
+    private var errorSummaryText: String {
+        guard let avItem = player.currentItem else { return "no item" }
+        let summary = errorSummary(avItem)
+        return summary.isEmpty ? "no errors" : summary
+    }
+
     func disableSubtitles() {
         subsEnabled = false
         if let item { Memory.remember(subtitle: nil, for: item.title.key) }
@@ -1021,6 +1043,7 @@ final class PlayerModel: ObservableObject {
         log("attach \(stream.source) (\(stream.hls ? "hls" : "mp4"), \(stream.subs.count) subs)")
         attachedAt = Date()
         let avItem = AVPlayerItem(url: url)
+        player.allowsExternalPlayback = url.host != "127.0.0.1"
         player.automaticallyWaitsToMinimizeStalling = true
         player.replaceCurrentItem(with: avItem)
 

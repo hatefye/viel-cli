@@ -16,6 +16,9 @@ struct DetailsView: View {
     @State private var error: String?
     @State private var playing: Playable?
     @State private var toast: String?
+    @State private var trailer: URL?
+    @State private var watched: [String: HistoryRow] = [:]
+    @Environment(\.openURL) private var openURL
 
     init(title: Title, resume: Resume?) {
         self.title = title
@@ -42,6 +45,24 @@ struct DetailsView: View {
         guard let list else { return [] }
         if isAnime { return Array(list.episodes.indices) }
         return list.episodes.indices.filter { list.episodes[$0].season == season }
+    }
+
+    private func progressKey(_ episode: Episode) -> String {
+        "\(isAnime ? 0 : episode.season)-\(Int(episode.number))"
+    }
+
+    private var nextUnwatched: Int? {
+        guard let list, !watched.isEmpty else { return nil }
+        let order = isAnime ? Array(list.episodes.indices) : list.episodes.indices.sorted { (list.episodes[$0].season, list.episodes[$0].number) < (list.episodes[$1].season, list.episodes[$1].number) }
+        guard let last = order.lastIndex(where: { watched[progressKey(list.episodes[$0])]?.finished == true }) else { return nil }
+        return order.indices.contains(last + 1) ? order[last + 1] : nil
+    }
+
+    private var playLabel: String {
+        if resume?.resumeAt != nil { return "Resume" }
+        guard let list, let next = nextUnwatched, list.episodes.indices.contains(next) else { return "Play" }
+        let episode = list.episodes[next]
+        return isAnime ? "Play E\(episode.numberText)" : "Play S\(episode.season) E\(Int(episode.number))"
     }
 
     private var seasonLabel: String {
@@ -72,7 +93,10 @@ struct DetailsView: View {
         .task {
             dub = core.settings.dub
             await loadDetails()
-            if !isMovie { await loadEpisodes() }
+            if !isMovie {
+                await loadEpisodes()
+                await loadWatched()
+            }
         }
         .onChange(of: seasonId) { _, _ in Task { await loadEpisodes() } }
         .onChange(of: dub) { _, value in
@@ -125,7 +149,7 @@ struct DetailsView: View {
                         Haptic.tap()
                         play(resuming: true)
                     } label: {
-                        Label(resume?.resumeAt != nil ? "Resume" : "Play", systemImage: "play.fill")
+                        Label(playLabel, systemImage: "play.fill")
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(.black)
                             .padding(.horizontal, 18)
@@ -155,6 +179,19 @@ struct DetailsView: View {
                         }
                         .buttonStyle(.glass)
                         .buttonBorderShape(.circle)
+                    }
+                    if let trailer {
+                        Button {
+                            Haptic.select()
+                            openURL(trailer)
+                        } label: {
+                            Image(systemName: "play.rectangle")
+                                .font(.system(size: 20, weight: .medium))
+                                .frame(width: 50, height: 50)
+                        }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
+                        .accessibilityLabel("Trailer")
                     }
                 }
             }
@@ -230,7 +267,8 @@ struct DetailsView: View {
                 ForEach(visibleEpisodes, id: \.self) { index in
                     let episode = list.episodes[index]
                     let current = resume.map { ($0.season == episode.season || isAnime) && $0.episode == Int(episode.number) } ?? false
-                    EpisodeRow(episode: episode, highlighted: current, runtime: episode.runtime ?? details?.runtime, subtitle: current ? resume?.label : nil)
+                    let row = watched[progressKey(episode)]
+                    EpisodeRow(episode: episode, highlighted: current, runtime: episode.runtime ?? details?.runtime, subtitle: current ? resume?.label : nil, progress: row?.fraction, watched: row?.finished ?? false)
                         .onTapGesture {
                             Haptic.tap()
                             play(index: index, startAt: current ? resume?.resumeAt : nil)
@@ -280,6 +318,8 @@ struct DetailsView: View {
         guard let list, !list.episodes.isEmpty else { return }
         if resuming, let resume, let index = list.episodes.firstIndex(where: { (isAnime || $0.season == resume.season) && Int($0.number) == resume.episode }) {
             play(index: index, startAt: resume.resumeAt)
+        } else if let next = nextUnwatched {
+            play(index: next, startAt: nil)
         } else {
             play(index: visibleEpisodes.first ?? 0, startAt: nil)
         }
@@ -306,6 +346,16 @@ struct DetailsView: View {
         let length = Double((episode.runtime ?? details?.runtime ?? 24) * 60)
         await core.saveProgress(item.progress(position: length, duration: length))
         flash("Marked as watched")
+        await loadWatched()
+    }
+
+    private func loadWatched() async {
+        guard core.username != nil else { return }
+        var map: [String: HistoryRow] = [:]
+        for row in await core.history() where row.kind == title.kind && row.id == active.id {
+            map["\(isAnime ? 0 : row.season)-\(row.episode)"] = row
+        }
+        watched = map
     }
 
     private func flash(_ text: String) {
@@ -318,6 +368,7 @@ struct DetailsView: View {
 
     private func loadDetails() async {
         details = try? await core.get("details", ["kind": title.kind, "id": String(title.id)])
+        trailer = await core.trailer(kind: title.kind, id: title.id)
     }
 
     private func loadEpisodes() async {
@@ -344,6 +395,8 @@ struct EpisodeRow: View {
     var highlighted = false
     var runtime: Int?
     var subtitle: String?
+    var progress: Double?
+    var watched = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -356,6 +409,27 @@ struct EpisodeRow: View {
                     .padding(.vertical, 3)
                     .background(Color.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                     .padding(6)
+                if watched {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white, Theme.match)
+                        .padding(6)
+                        .frame(width: 130, alignment: .trailing)
+                }
+                if let progress, progress > 0, !watched {
+                    VStack {
+                        Spacer()
+                        GeometryReader { geometry in
+                            ZStack(alignment: .leading) {
+                                Rectangle().fill(Color.white.opacity(0.3))
+                                Rectangle().fill(Theme.accent).frame(width: geometry.size.width * progress)
+                            }
+                        }
+                        .frame(height: 3)
+                    }
+                    .frame(width: 130, height: 76)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                }
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(episode.displayName)

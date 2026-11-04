@@ -9,6 +9,7 @@ struct RootView: View {
     @State private var resume: Resume?
     @State private var playing: Playable?
     @State private var searching = false
+    @State private var recommended: [Title] = []
 
     var body: some View {
         NavigationStack {
@@ -121,6 +122,15 @@ struct RootView: View {
                     .onTapGesture { selected = title }
             }
         }
+        if !recommended.isEmpty {
+            Row(title: "Because you watched") {
+                ForEach(recommended, id: \.key) { title in
+                    Poster(url: title.poster)
+                        .matchedTransitionSource(id: title.key, in: zoom)
+                        .onTapGesture { selected = title }
+                }
+            }
+        }
         if !home.anime.isEmpty {
             Row(title: "Trending anime") {
                 ForEach(home.anime, id: \.key) { title in
@@ -175,6 +185,7 @@ struct RootView: View {
         do {
             home = try await core.get("home")
             error = nil
+            recommended = await core.recommendations()
         } catch {
             self.error = error.localizedDescription
             core.log("home", "load failed: \(error.localizedDescription)")

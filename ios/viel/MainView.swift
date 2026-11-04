@@ -56,11 +56,31 @@ final class Watchlist: ObservableObject {
     }
 
     func toggle(_ title: Title) {
-        if contains(title) {
-            items.removeAll { $0.key == title.key }
-        } else {
+        let adding = !contains(title)
+        if adding {
             items.insert(title, at: 0)
+        } else {
+            items.removeAll { $0.key == title.key }
         }
+        persist()
+        Task { @MainActor in
+            await Core.shared.setWatch(title, on: adding)
+        }
+    }
+
+    @MainActor
+    func sync(core: Core) async {
+        guard let remote = await core.remoteWatchlist() else { return }
+        let known = Set(remote.map(\.key))
+        let localOnly = items.filter { !known.contains($0.key) }
+        for title in localOnly {
+            await core.setWatch(title, on: true)
+        }
+        items = remote + localOnly
+        persist()
+    }
+
+    private func persist() {
         if let data = try? JSONEncoder().encode(items) {
             UserDefaults.standard.set(data, forKey: "watchlist")
         }

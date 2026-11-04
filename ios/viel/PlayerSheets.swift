@@ -153,6 +153,8 @@ struct SettingsSheet: View {
     let onClose: () -> Void
 
     @EnvironmentObject private var core: Core
+    @State private var tracks: [AudioTrack] = []
+    @State private var note: String?
 
     private let qualities = [720, 1080, 1440, 2160]
     private let rates: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]
@@ -193,7 +195,32 @@ struct SettingsSheet: View {
                         Button { onSubtitles() } label: {
                             tile(badge: nil, icon: "captions.bubble", label: "Subtitles", value: subtitleValue)
                         }
-                        tile(badge: nil, icon: "speaker.wave.2", label: "Audio", value: "Default").opacity(0.5)
+                        Menu {
+                            if tracks.isEmpty {
+                                Text("Only one audio track")
+                            }
+                            ForEach(tracks, id: \.lang) { track in
+                                Button(track.label) {
+                                    core.settings.audioLang = track.lang
+                                    core.log("settings", "audio \(track.lang)")
+                                    Task {
+                                        await core.pushSettings()
+                                        model.reattach()
+                                    }
+                                }
+                            }
+                            if !core.settings.audioLang.isEmpty {
+                                Button("Automatic") {
+                                    core.settings.audioLang = ""
+                                    Task {
+                                        await core.pushSettings()
+                                        model.reattach()
+                                    }
+                                }
+                            }
+                        } label: {
+                            tile(badge: nil, icon: "speaker.wave.2", label: "Audio", value: audioValue)
+                        }
                     }
                     Menu {
                         ForEach(rates, id: \.self) { rate in
@@ -210,6 +237,12 @@ struct SettingsSheet: View {
                         Toggle("", isOn: $model.subsEnabled).labelsHidden().tint(.white)
                     }
                     .padding(.horizontal, 6)
+                    Button {
+                        model.report()
+                        note = "Sent. Thanks, that helps."
+                    } label: {
+                        row(icon: "exclamationmark.bubble", label: "Report a problem", value: note ?? "")
+                    }
                     Text("Quality applies to the next stream that loads.")
                         .font(.system(size: 13))
                         .foregroundStyle(Theme.faint)
@@ -218,6 +251,16 @@ struct SettingsSheet: View {
                 .padding(.horizontal, 16)
             }
         }
+        .task {
+            guard let stream = model.stream, !stream.isOffline else { return }
+            tracks = await core.audioTracks(for: stream.url)
+        }
+    }
+
+    private var audioValue: String {
+        if tracks.isEmpty { return "Default" }
+        if core.settings.audioLang.isEmpty { return "Automatic" }
+        return tracks.first { $0.lang == core.settings.audioLang }?.label ?? core.settings.audioLang
     }
 
     private var subtitleValue: String {
