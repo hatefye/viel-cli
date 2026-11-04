@@ -7,7 +7,11 @@ use inquire::{Confirm, InquireError, Password, PasswordDisplayMode, Select, Text
 use std::fmt::Display;
 use std::io::stdout;
 
-const RED: Color = Color::Rgb { r: 220, g: 38, b: 38 };
+const RED: Color = Color::Rgb {
+    r: 220,
+    g: 38,
+    b: 38,
+};
 
 pub fn theme() {
     let cfg = RenderConfig::default()
@@ -27,7 +31,12 @@ pub fn select<T: Display>(prompt: &str, options: Vec<T>) -> Result<Option<T>> {
 }
 
 pub fn select_from<T: Display>(prompt: &str, options: Vec<T>, start: usize) -> Result<Option<T>> {
-    soft(Select::new(prompt, options).with_page_size(12).with_starting_cursor(start).prompt())
+    soft(
+        Select::new(prompt, options)
+            .with_page_size(12)
+            .with_starting_cursor(start)
+            .prompt(),
+    )
 }
 
 pub fn text(prompt: &str) -> Result<Option<String>> {

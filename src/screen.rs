@@ -2,15 +2,17 @@ use crate::api::Api;
 use anyhow::Result;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use ratatui::layout::{Constraint, Layout, Rect, Size};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use ratatui_image::picker::{Capability, Picker, ProtocolType};
-use ratatui_image::FontSize;
 use ratatui_image::protocol::Protocol;
+use ratatui_image::FontSize;
 use ratatui_image::{Image, Resize};
 use std::collections::{HashMap, HashSet};
 use std::io::{stdout, Stdout};
@@ -91,9 +93,12 @@ fn picker() -> &'static Picker {
     static PICKER: std::sync::OnceLock<Picker> = std::sync::OnceLock::new();
     PICKER.get_or_init(|| {
         use std::io::IsTerminal;
-        let forced = std::env::var("VIEL_IMAGES").unwrap_or_default().to_lowercase();
+        let forced = std::env::var("VIEL_IMAGES")
+            .unwrap_or_default()
+            .to_lowercase();
         let tty = std::io::stdin().is_terminal() && stdout().is_terminal();
-        let wt = cfg!(windows) && (!std::env::var("WT_SESSION").unwrap_or_default().is_empty() || console::pseudo());
+        let wt = cfg!(windows)
+            && (!std::env::var("WT_SESSION").unwrap_or_default().is_empty() || console::pseudo());
         let mut note = String::new();
         let mut probe = || match Picker::from_query_stdio() {
             Ok(p) => {
@@ -144,7 +149,15 @@ fn picker() -> &'static Picker {
             },
         };
         let fs = picker.font_size();
-        let _ = INFO.set(format!("{:?} · cell {}x{} · {note}", picker.protocol_type(), fs.width, fs.height).to_lowercase());
+        let _ = INFO.set(
+            format!(
+                "{:?} · cell {}x{} · {note}",
+                picker.protocol_type(),
+                fs.width,
+                fs.height
+            )
+            .to_lowercase(),
+        );
         picker
     })
 }
@@ -163,7 +176,10 @@ fn cell_guess() -> FontSize {
     let custom = std::env::var("VIEL_CELL").ok().and_then(|v| {
         let v = v.to_lowercase();
         let (w, h) = v.split_once('x')?;
-        Some(FontSize::new(w.trim().parse().ok()?, h.trim().parse().ok()?))
+        Some(FontSize::new(
+            w.trim().parse().ok()?,
+            h.trim().parse().ok()?,
+        ))
     });
     custom.unwrap_or_else(|| {
         let scale = console::scale();
@@ -209,7 +225,11 @@ mod console {
             }
             let dpi = GetDeviceCaps(hdc, LOGPIXELSY);
             ReleaseDC(std::ptr::null_mut(), hdc);
-            if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 }
+            if dpi > 0 {
+                dpi as f32 / 96.0
+            } else {
+                1.0
+            }
         }
     }
 }
@@ -227,15 +247,31 @@ mod console {
 
 fn graphics_terminal() -> bool {
     let var = |k: &str| std::env::var(k).unwrap_or_default();
-    if !var("WT_SESSION").is_empty() || !var("KITTY_WINDOW_ID").is_empty() || !var("KONSOLE_VERSION").is_empty() || !var("WEZTERM_EXECUTABLE").is_empty() {
+    if !var("WT_SESSION").is_empty()
+        || !var("KITTY_WINDOW_ID").is_empty()
+        || !var("KONSOLE_VERSION").is_empty()
+        || !var("WEZTERM_EXECUTABLE").is_empty()
+    {
         return true;
     }
     let program = var("TERM_PROGRAM").to_lowercase();
     let term = var("TERM").to_lowercase();
-    ["wezterm", "iterm", "ghostty", "mintty", "rio", "warpterminal", "tabby", "contour"].iter().any(|p| program.contains(p))
-        || ["kitty", "ghostty", "foot", "contour", "mlterm", "st-"].iter().any(|t| term.contains(t))
+    [
+        "wezterm",
+        "iterm",
+        "ghostty",
+        "mintty",
+        "rio",
+        "warpterminal",
+        "tabby",
+        "contour",
+    ]
+    .iter()
+    .any(|p| program.contains(p))
+        || ["kitty", "ghostty", "foot", "contour", "mlterm", "st-"]
+            .iter()
+            .any(|t| term.contains(t))
 }
-
 
 impl Drop for Tui {
     fn drop(&mut self) {
@@ -259,12 +295,22 @@ struct Posters {
 impl Posters {
     fn new() -> Self {
         let (tx, rx) = channel();
-        Self { bytes: Arc::default(), ready: HashMap::new(), loading: HashSet::new(), tx, rx }
+        Self {
+            bytes: Arc::default(),
+            ready: HashMap::new(),
+            loading: HashSet::new(),
+            tx,
+            rx,
+        }
     }
 
     fn want(&mut self, api: &Api, path: &str, size: Size) {
         let key = (path.to_string(), size.width, size.height);
-        if self.ready.contains_key(&key) || self.loading.contains(&key) || size.width == 0 || size.height == 0 {
+        if self.ready.contains_key(&key)
+            || self.loading.contains(&key)
+            || size.width == 0
+            || size.height == 0
+        {
             return;
         }
         self.loading.insert(key.clone());
@@ -283,10 +329,15 @@ impl Posters {
                 }
             };
             let resize = Resize::Fit(Some(image::imageops::FilterType::Lanczos3));
-            let proto = data.and_then(|d| image::load_from_memory(&d).ok()).and_then(|img| {
-                let cells = resize.size_for(&img, picker().font_size(), size);
-                picker().new_protocol(img, size, resize).ok().map(|p| (p, cells))
-            });
+            let proto = data
+                .and_then(|d| image::load_from_memory(&d).ok())
+                .and_then(|img| {
+                    let cells = resize.size_for(&img, picker().font_size(), size);
+                    picker()
+                        .new_protocol(img, size, resize)
+                        .ok()
+                        .map(|p| (p, cells))
+                });
             let _ = tx.send((key, proto));
         });
     }
@@ -313,7 +364,8 @@ pub fn run<T: Send + 'static>(api: &Api, screen: &mut Screen<T>) -> Result<Out> 
     let mut sent: Option<String> = None;
     let mut busy = false;
 
-    if let (Some(q), Some(search), true) = (&screen.query, &screen.search, screen.items.is_empty()) {
+    if let (Some(q), Some(search), true) = (&screen.query, &screen.search, screen.items.is_empty())
+    {
         dispatch(search, q, &results_tx);
         sent = Some(q.clone());
         busy = true;
@@ -340,7 +392,9 @@ pub fn run<T: Send + 'static>(api: &Api, screen: &mut Screen<T>) -> Result<Out> 
             screen.cursor = screen.cursor.min(screen.items.len() - 1);
             let size = {
                 let area = tui.0.size()?;
-                let cols = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(Rect::new(0, 0, area.width, area.height.saturating_sub(1)));
+                let cols =
+                    Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
+                        .split(Rect::new(0, 0, area.width, area.height.saturating_sub(1)));
                 let inner = Block::default().borders(Borders::ALL).inner(cols[1]);
                 poster_area(inner).as_size()
             };
@@ -350,14 +404,21 @@ pub fn run<T: Send + 'static>(api: &Api, screen: &mut Screen<T>) -> Result<Out> 
                 }
             }
         }
-        state.select(if screen.items.is_empty() { None } else { Some(screen.cursor) });
+        state.select(if screen.items.is_empty() {
+            None
+        } else {
+            Some(screen.cursor)
+        });
 
-        tui.0.draw(|f| draw(f, screen, &mut state, &posters, busy))?;
+        tui.0
+            .draw(|f| draw(f, screen, &mut state, &posters, busy))?;
 
         if !event::poll(Duration::from_millis(50))? {
             continue;
         }
-        let Event::Key(key) = event::read()? else { continue };
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
         if key.kind != KeyEventKind::Press {
             continue;
         }
@@ -399,7 +460,9 @@ pub fn run<T: Send + 'static>(api: &Api, screen: &mut Screen<T>) -> Result<Out> 
                     'k' => screen.cursor = step(screen.cursor, len, -1),
                     'j' => screen.cursor = step(screen.cursor, len, 1),
                     'q' => return Ok(Out::Back),
-                    _ if screen.keys.contains(&c) && len > 0 => return Ok(Out::Key(c, screen.cursor)),
+                    _ if screen.keys.contains(&c) && len > 0 => {
+                        return Ok(Out::Key(c, screen.cursor))
+                    }
                     _ => {}
                 },
             },
@@ -425,22 +488,44 @@ fn step(cur: usize, len: usize, delta: i64) -> usize {
     (cur as i64 + delta).clamp(0, len as i64 - 1) as usize
 }
 
-fn draw<T>(f: &mut ratatui::Frame, screen: &Screen<T>, state: &mut ListState, posters: &Posters, busy: bool) {
+fn draw<T>(
+    f: &mut ratatui::Frame,
+    screen: &Screen<T>,
+    state: &mut ListState,
+    posters: &Posters,
+    busy: bool,
+) {
     let outer = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).split(f.area());
-    let cols = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(outer[0]);
+    let cols = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
+        .split(outer[0]);
 
     let mut left = cols[0];
     if let Some(q) = &screen.query {
         let parts = Layout::vertical([Constraint::Length(3), Constraint::Min(0)]).split(cols[0]);
-        let caret = if q.is_empty() { "search anything".dim() } else { q.as_str().into() };
-        let input = Paragraph::new(Line::from(vec!["› ".fg(RED).bold(), caret, "▏".dim()]))
-            .block(Block::default().borders(Borders::ALL).title(Span::styled(" viel ", Style::default().fg(RED).bold())));
+        let caret = if q.is_empty() {
+            "search anything".dim()
+        } else {
+            q.as_str().into()
+        };
+        let input = Paragraph::new(Line::from(vec!["› ".fg(RED).bold(), caret, "▏".dim()])).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(" viel ", Style::default().fg(RED).bold())),
+        );
         f.render_widget(input, parts[0]);
         left = parts[1];
     }
 
-    let rows: Vec<ListItem> = screen.items.iter().map(|t| ListItem::new((screen.row)(t).label)).collect();
-    let title = if busy { format!(" {} · searching… ", screen.heading) } else { format!(" {} ", screen.heading) };
+    let rows: Vec<ListItem> = screen
+        .items
+        .iter()
+        .map(|t| ListItem::new((screen.row)(t).label))
+        .collect();
+    let title = if busy {
+        format!(" {} · searching… ", screen.heading)
+    } else {
+        format!(" {} ", screen.heading)
+    };
     let list = List::new(rows)
         .block(Block::default().borders(Borders::ALL).title(title))
         .highlight_style(Style::default().fg(RED).add_modifier(Modifier::BOLD))
@@ -457,7 +542,11 @@ fn draw<T>(f: &mut ratatui::Frame, screen: &Screen<T>, state: &mut ListState, po
     }
 
     let footer = match &screen.status {
-        Some(s) => Line::from(vec![Span::styled(format!(" {s}"), Style::default().fg(RED)), Span::raw("   "), screen.hint.as_str().dim()]),
+        Some(s) => Line::from(vec![
+            Span::styled(format!(" {s}"), Style::default().fg(RED)),
+            Span::raw("   "),
+            screen.hint.as_str().dim(),
+        ]),
         None => Line::from(format!(" {}", screen.hint).dim()),
     };
     f.render_widget(Paragraph::new(footer), outer[1]);
@@ -466,10 +555,17 @@ fn draw<T>(f: &mut ratatui::Frame, screen: &Screen<T>, state: &mut ListState, po
 fn detail(f: &mut ratatui::Frame, area: Rect, row: &Row, posters: &Posters) {
     let top = poster_area(area);
     let panes = Layout::vertical([Constraint::Length(top.height), Constraint::Min(0)]).split(area);
-    if let Some(Some((proto, cells))) = row.poster.as_ref().and_then(|p| posters.ready.get(&(p.clone(), top.width, top.height))) {
+    if let Some(Some((proto, cells))) = row
+        .poster
+        .as_ref()
+        .and_then(|p| posters.ready.get(&(p.clone(), top.width, top.height)))
+    {
         let w = cells.width.min(top.width);
         let x = top.x + (top.width - w) / 2;
-        f.render_widget(Image::new(proto), Rect::new(x, top.y, w, cells.height.min(top.height)));
+        f.render_widget(
+            Image::new(proto),
+            Rect::new(x, top.y, w, cells.height.min(top.height)),
+        );
     }
     let text = vec![
         Line::from(""),
@@ -495,7 +591,10 @@ pub fn countdown(label: &str, seconds: u64) -> Result<bool> {
                 Line::from(""),
                 Line::from(format!("playing in {left}s   ⏎ now   esc stop").dim()).centered(),
             ];
-            f.render_widget(Paragraph::new(lines), Rect::new(area.x, y.saturating_sub(2), area.width, 4));
+            f.render_widget(
+                Paragraph::new(lines),
+                Rect::new(area.x, y.saturating_sub(2), area.width, 4),
+            );
         })?;
         if left == 0 {
             return Ok(true);
@@ -508,7 +607,9 @@ pub fn countdown(label: &str, seconds: u64) -> Result<bool> {
                 match key.code {
                     KeyCode::Enter => return Ok(true),
                     KeyCode::Esc | KeyCode::Char('q') => return Ok(false),
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(false),
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        return Ok(false)
+                    }
                     _ => {}
                 }
             }

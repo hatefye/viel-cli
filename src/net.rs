@@ -38,7 +38,12 @@ pub fn send(url: &str, referer: Option<&str>, range: Option<&str>) -> Result<Res
     send_with(url, referer, range, 7)
 }
 
-pub fn send_with(url: &str, referer: Option<&str>, range: Option<&str>, attempts: u32) -> Result<Response> {
+pub fn send_with(
+    url: &str,
+    referer: Option<&str>,
+    range: Option<&str>,
+    attempts: u32,
+) -> Result<Response> {
     let mut last = None;
     let mut wait = Duration::from_millis(500);
     let mut h2 = h2_hosts().lock().unwrap().contains(host(url));
@@ -69,7 +74,9 @@ pub fn send_with(url: &str, referer: Option<&str>, range: Option<&str>, attempts
                 h2_hosts().lock().unwrap().insert(host(url).to_string());
                 continue;
             }
-            Ok(resp) if resp.status().is_client_error() => bail!("{} from {}", resp.status(), host(url)),
+            Ok(resp) if resp.status().is_client_error() => {
+                bail!("{} from {}", resp.status(), host(url))
+            }
             Ok(resp) => last = Some(anyhow::anyhow!("{} from {}", resp.status(), host(url))),
             Err(err) => last = Some(err.into()),
         }
@@ -88,7 +95,10 @@ pub fn text(url: &str, referer: Option<&str>) -> Result<String> {
 }
 
 pub fn host(url: &str) -> &str {
-    url.split("://").nth(1).and_then(|r| r.split('/').next()).unwrap_or(url)
+    url.split("://")
+        .nth(1)
+        .and_then(|r| r.split('/').next())
+        .unwrap_or(url)
 }
 
 pub fn join(base: &str, rel: &str) -> String {
@@ -103,7 +113,9 @@ pub fn ts_offset(buf: &[u8]) -> usize {
         return 0;
     }
     let limit = buf.len().saturating_sub(376).min(8192);
-    (0..limit).find(|&i| buf[i] == 0x47 && buf[i + 188] == 0x47 && buf[i + 376] == 0x47).unwrap_or(0)
+    (0..limit)
+        .find(|&i| buf[i] == 0x47 && buf[i + 188] == 0x47 && buf[i + 376] == 0x47)
+        .unwrap_or(0)
 }
 
 pub fn unmask_ts(buf: &[u8]) -> &[u8] {
@@ -125,8 +137,16 @@ pub fn looks_like_video(bytes: &[u8]) -> bool {
     if ts.first() == Some(&0x47) {
         return true;
     }
-    if &bytes[4..8] == b"ftyp" || &bytes[4..8] == b"styp" || &bytes[4..8] == b"moof" || &bytes[4..8] == b"sidx" {
+    if &bytes[4..8] == b"ftyp"
+        || &bytes[4..8] == b"styp"
+        || &bytes[4..8] == b"moof"
+        || &bytes[4..8] == b"sidx"
+    {
         return true;
     }
-    !(bytes.starts_with(b"\x89PNG") || bytes.starts_with(b"GIF8") || bytes.starts_with(&[0xFF, 0xD8]) || bytes[0] == b'<' || bytes[0] == b'{')
+    !(bytes.starts_with(b"\x89PNG")
+        || bytes.starts_with(b"GIF8")
+        || bytes.starts_with(&[0xFF, 0xD8])
+        || bytes[0] == b'<'
+        || bytes[0] == b'{')
 }

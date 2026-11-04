@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{mpsc, Mutex, OnceLock};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 static MAX_HEIGHT: AtomicU32 = AtomicU32::new(1080);
 static INFLIGHT: AtomicUsize = AtomicUsize::new(0);
@@ -38,8 +38,16 @@ pub struct Activity {
 }
 
 pub fn activity() -> Activity {
-    let fetching = current().lock().unwrap().as_ref().map(|(what, at)| (what.clone(), at.elapsed().as_secs_f32()));
-    Activity { inflight: INFLIGHT.load(Ordering::Relaxed), served: SERVED.load(Ordering::Relaxed), fetching }
+    let fetching = current()
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|(what, at)| (what.clone(), at.elapsed().as_secs_f32()));
+    Activity {
+        inflight: INFLIGHT.load(Ordering::Relaxed),
+        served: SERVED.load(Ordering::Relaxed),
+        fetching,
+    }
 }
 
 pub fn reset_activity() {
@@ -82,7 +90,11 @@ pub fn port() -> u16 {
 }
 
 fn link(route: &str, file: &str, url: &str, referer: Option<&str>) -> String {
-    let mut out = format!("http://127.0.0.1:{}/{route}/{file}?u={}", port(), urlencoding::encode(url));
+    let mut out = format!(
+        "http://127.0.0.1:{}/{route}/{file}?u={}",
+        port(),
+        urlencoding::encode(url)
+    );
     if let Some(r) = referer.filter(|r| !r.is_empty()) {
         out.push_str("&r=");
         out.push_str(&urlencoding::encode(r));
@@ -112,7 +124,13 @@ fn rewrite(text: &str, base: &str, referer: Option<&str>) -> String {
 }
 
 fn declared_len(resp: &reqwest::blocking::Response) -> Option<u64> {
-    resp.headers().get("content-length")?.to_str().ok()?.trim().parse().ok()
+    resp.headers()
+        .get("content-length")?
+        .to_str()
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 struct Request {
@@ -125,7 +143,10 @@ struct Request {
 
 impl Request {
     fn param(&self, key: &str) -> Option<&str> {
-        self.query.get(key).map(String::as_str).filter(|v| !v.is_empty())
+        self.query
+            .get(key)
+            .map(String::as_str)
+            .filter(|v| !v.is_empty())
     }
 }
 
@@ -177,8 +198,19 @@ fn serve(conn: TcpStream) -> Result<()> {
         let started = Instant::now();
         let target = line.split_whitespace().nth(1).unwrap_or("?").to_string();
         let keep = match parse(&line) {
-            Some((method, path, query)) => respond(&mut out, Request { method, path, query, body, range }),
-            None => reply(&mut out, "400 Bad Request", "text/plain", b"bad request").map(|_| true).map_err(Into::into),
+            Some((method, path, query)) => respond(
+                &mut out,
+                Request {
+                    method,
+                    path,
+                    query,
+                    body,
+                    range,
+                },
+            ),
+            None => reply(&mut out, "400 Bad Request", "text/plain", b"bad request")
+                .map(|_| true)
+                .map_err(Into::into),
         };
         let took = started.elapsed().as_secs_f32();
         if took > 2.0 && !target.starts_with("/api/") {
@@ -189,7 +221,12 @@ fn serve(conn: TcpStream) -> Result<()> {
             Ok(_) => return Ok(()),
             Err(err) => {
                 local::log("relay", format!("{err} ← {}", describe(&target)));
-                let _ = reply(&mut out, "502 Bad Gateway", "text/plain", err.to_string().as_bytes());
+                let _ = reply(
+                    &mut out,
+                    "502 Bad Gateway",
+                    "text/plain",
+                    err.to_string().as_bytes(),
+                );
                 return Ok(());
             }
         }
@@ -205,7 +242,13 @@ fn describe(target: &str) -> String {
         .map(|u| u.into_owned())
         .unwrap_or_default();
     let host = net::host(&url);
-    let tail: String = url.rsplit('/').next().unwrap_or("").chars().take(40).collect();
+    let tail: String = url
+        .rsplit('/')
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(40)
+        .collect();
     format!("{path} {host}/…/{tail}")
 }
 
@@ -229,7 +272,11 @@ fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
         "p" => format!("playlist · {}", net::host(url)),
         "t" => format!("subtitles · {}", net::host(url)),
         "v" => format!("video · {}", net::host(url)),
-        _ => format!("{} · {}", file.split('.').next().unwrap_or("segment"), net::host(url)),
+        _ => format!(
+            "{} · {}",
+            file.split('.').next().unwrap_or("segment"),
+            net::host(url)
+        ),
     };
     let _busy = begin(what);
     match route {
@@ -239,14 +286,25 @@ fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
                 return Err(anyhow!("not a playlist from {}", net::host(url)));
             }
             let text = if hls::is_master(&text) {
-                hls::trim_master(&text, url, MAX_HEIGHT.load(Ordering::Relaxed), &lang().lock().unwrap()).unwrap_or(text)
+                hls::trim_master(
+                    &text,
+                    url,
+                    MAX_HEIGHT.load(Ordering::Relaxed),
+                    &lang().lock().unwrap(),
+                )
+                .unwrap_or(text)
             } else {
                 text
             };
-            reply(out, "200 OK", "application/vnd.apple.mpegurl", rewrite(&text, url, referer).as_bytes())?;
+            reply(
+                out,
+                "200 OK",
+                "application/vnd.apple.mpegurl",
+                rewrite(&text, url, referer).as_bytes(),
+            )?;
         }
         "t" => {
-            let body = net::send_with(url, referer, None, 2)?.bytes()?;
+            let body = fetch_subtitle(url, referer)?;
             reply(out, "200 OK", "text/plain; charset=utf-8", &body)?;
         }
         "s" => return stream_segment(out, url, referer, file),
@@ -256,7 +314,50 @@ fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
     Ok(true)
 }
 
-fn stream_segment(out: &mut TcpStream, url: &str, referer: Option<&str>, file: &str) -> Result<bool> {
+fn fetch_subtitle(url: &str, referer: Option<&str>) -> Result<Vec<u8>> {
+    let (tx, rx) = mpsc::channel();
+    let mut pending = 1;
+    spawn_fetch(tx.clone(), url.to_string(), referer.map(str::to_string));
+    let mut wait = Duration::from_secs(3);
+    let mut last = anyhow!("no subtitle route");
+    loop {
+        match rx.recv_timeout(wait) {
+            Ok(Ok(body)) => return Ok(body),
+            Ok(Err(err)) => {
+                last = err;
+                pending -= 1;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) if pending == 0 => return Err(last),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(last),
+        }
+        if wait.as_secs() == 3 {
+            wait = Duration::from_secs(25);
+            if let Some(via) = local::subtitle_proxy(url, referer) {
+                pending += 1;
+                spawn_fetch(tx.clone(), via, None);
+            }
+        }
+        if pending == 0 {
+            return Err(last);
+        }
+    }
+}
+
+fn spawn_fetch(tx: mpsc::Sender<Result<Vec<u8>>>, url: String, referer: Option<String>) {
+    thread::spawn(move || {
+        let result = net::send_with(&url, referer.as_deref(), None, 1)
+            .and_then(|resp| Ok(resp.bytes()?.to_vec()));
+        let _ = tx.send(result);
+    });
+}
+
+fn stream_segment(
+    out: &mut TcpStream,
+    url: &str,
+    referer: Option<&str>,
+    file: &str,
+) -> Result<bool> {
     let mut resp = net::send_with(url, referer, None, 2)?;
     let mut head = Vec::with_capacity(16384);
     let mut chunk = [0u8; 16384];
@@ -267,9 +368,16 @@ fn stream_segment(out: &mut TcpStream, url: &str, referer: Option<&str>, file: &
         }
         head.extend_from_slice(&chunk[..n]);
     }
-    let skip = if file.ends_with(".ts") { net::ts_offset(&head) } else { 0 };
+    let skip = if file.ends_with(".ts") {
+        net::ts_offset(&head)
+    } else {
+        0
+    };
     let known = declared_len(&resp).filter(|_| skip == 0);
-    write!(out, "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n")?;
+    write!(
+        out,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\n"
+    )?;
     match known {
         Some(n) => write!(out, "Content-Length: {n}\r\nConnection: keep-alive\r\n\r\n")?,
         None => write!(out, "Connection: close\r\n\r\n")?,
@@ -280,12 +388,28 @@ fn stream_segment(out: &mut TcpStream, url: &str, referer: Option<&str>, file: &
     Ok(known.is_some())
 }
 
-fn stream_video(out: &mut TcpStream, url: &str, referer: Option<&str>, range: Option<&str>) -> Result<bool> {
+fn stream_video(
+    out: &mut TcpStream,
+    url: &str,
+    referer: Option<&str>,
+    range: Option<&str>,
+) -> Result<bool> {
     let mut resp = net::send_with(url, referer, range, 2)?;
-    let status = if resp.status().as_u16() == 206 { "206 Partial Content" } else { "200 OK" };
+    let status = if resp.status().as_u16() == 206 {
+        "206 Partial Content"
+    } else {
+        "200 OK"
+    };
     let length = declared_len(&resp);
-    write!(out, "HTTP/1.1 {status}\r\nContent-Type: video/mp4\r\nAccept-Ranges: bytes\r\n")?;
-    if let Some(range) = resp.headers().get("content-range").and_then(|v| v.to_str().ok()) {
+    write!(
+        out,
+        "HTTP/1.1 {status}\r\nContent-Type: video/mp4\r\nAccept-Ranges: bytes\r\n"
+    )?;
+    if let Some(range) = resp
+        .headers()
+        .get("content-range")
+        .and_then(|v| v.to_str().ok())
+    {
         write!(out, "Content-Range: {range}\r\n")?;
     }
     match length {

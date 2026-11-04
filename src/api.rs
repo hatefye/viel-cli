@@ -1,6 +1,6 @@
+use crate::{hls, net};
 use anyhow::{anyhow, bail, Result};
 use reqwest::blocking::{Client, RequestBuilder};
-use crate::{hls, net};
 use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -131,7 +131,11 @@ fn text<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D
 }
 
 pub fn plural(n: u64, word: &str) -> String {
-    if n == 1 { format!("1 {word}") } else { format!("{n} {word}s") }
+    if n == 1 {
+        format!("1 {word}")
+    } else {
+        format!("{n} {word}s")
+    }
 }
 
 fn num<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
@@ -152,7 +156,12 @@ impl AnimeSeason {
         Title {
             year: self.year.clone(),
             overview: Some(plural(self.episodes, "episode")),
-            ..Title::bare(self.id, Kind::Anime, self.title.clone(), self.cover.or(poster))
+            ..Title::bare(
+                self.id,
+                Kind::Anime,
+                self.title.clone(),
+                self.cover.or(poster),
+            )
         }
     }
 }
@@ -165,7 +174,11 @@ impl fmt::Display for Title {
             format!(" ({})", self.year)
         };
         if self.rating > 0.0 {
-            write!(f, "{}{} · {} · {:.1}", self.name, year, self.kind, self.rating)
+            write!(
+                f,
+                "{}{} · {} · {:.1}",
+                self.name, year, self.kind, self.rating
+            )
         } else {
             write!(f, "{}{} · {}", self.name, year, self.kind)
         }
@@ -180,7 +193,11 @@ pub struct Season {
 
 impl fmt::Display for Season {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "S{} · {} ({} eps)", self.number, self.name, self.episodes)
+        write!(
+            f,
+            "S{} · {} ({} eps)",
+            self.number, self.name, self.episodes
+        )
     }
 }
 
@@ -248,7 +265,11 @@ impl fmt::Display for ContinueRow {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let left = remaining(self.duration - self.position);
         match self.kind {
-            Kind::Tv => write!(f, "{} · S{}E{} · {} left", self.show, self.season, self.episode, left),
+            Kind::Tv => write!(
+                f,
+                "{} · S{}E{} · {} left",
+                self.show, self.season, self.episode, left
+            ),
             Kind::Anime => write!(f, "{} · E{} · {} left", self.show, self.episode, left),
             Kind::Movie => write!(f, "{} · {} left", self.show, left),
         }
@@ -287,8 +308,17 @@ impl Api {
 
     pub fn search(&self, query: &str) -> Result<Vec<Title>> {
         let url = format!("{}/proxy/tmdb/search/multi", self.host);
-        let resp: SearchResp = self.client.get(url).query(&[("query", query)]).send()?.json()?;
-        Ok(resp.results.into_iter().filter_map(|i| i.into_title(None)).collect())
+        let resp: SearchResp = self
+            .client
+            .get(url)
+            .query(&[("query", query)])
+            .send()?
+            .json()?;
+        Ok(resp
+            .results
+            .into_iter()
+            .filter_map(|i| i.into_title(None))
+            .collect())
     }
 
     pub fn trending(&self) -> Result<Vec<Title>> {
@@ -305,7 +335,11 @@ impl Api {
         };
         let url = format!("{}/proxy/tmdb/{}", self.host, path);
         let resp: SearchResp = self.client.get(url).send()?.json()?;
-        Ok(resp.results.into_iter().filter_map(|i| i.into_title(kind)).collect())
+        Ok(resp
+            .results
+            .into_iter()
+            .filter_map(|i| i.into_title(kind))
+            .collect())
     }
 
     pub fn details(&self, kind: Kind, id: u64) -> Result<Details> {
@@ -314,7 +348,13 @@ impl Api {
         }
         let slug = kind.slug();
         let (detail, images, credits) = thread::scope(|s| {
-            let a = s.spawn(|| -> Result<DetailResp> { Ok(self.client.get(format!("{}/proxy/tmdb/{slug}/{id}", self.host)).send()?.json()?) });
+            let a = s.spawn(|| -> Result<DetailResp> {
+                Ok(self
+                    .client
+                    .get(format!("{}/proxy/tmdb/{slug}/{id}", self.host))
+                    .send()?
+                    .json()?)
+            });
             let b = s.spawn(|| {
                 self.client
                     .get(format!("{}/proxy/tmdb/{slug}/{id}/images", self.host))
@@ -324,16 +364,37 @@ impl Api {
                     .json::<ImagesResp>()
                     .ok()
             });
-            let c = s.spawn(|| self.client.get(format!("{}/proxy/tmdb/{slug}/{id}/credits", self.host)).send().ok()?.json::<CreditsResp>().ok());
-            (a.join().unwrap_or_else(|_| Err(anyhow!("details lookup failed"))), b.join().ok().flatten(), c.join().ok().flatten())
+            let c = s.spawn(|| {
+                self.client
+                    .get(format!("{}/proxy/tmdb/{slug}/{id}/credits", self.host))
+                    .send()
+                    .ok()?
+                    .json::<CreditsResp>()
+                    .ok()
+            });
+            (
+                a.join()
+                    .unwrap_or_else(|_| Err(anyhow!("details lookup failed"))),
+                b.join().ok().flatten(),
+                c.join().ok().flatten(),
+            )
         });
         let detail = detail?;
         let logo = images.and_then(|i| {
-            let png = i.logos.iter().find(|l| l.file_path.ends_with(".png")).map(|l| l.file_path.clone());
+            let png = i
+                .logos
+                .iter()
+                .find(|l| l.file_path.ends_with(".png"))
+                .map(|l| l.file_path.clone());
             png.or_else(|| i.logos.into_iter().next().map(|l| l.file_path))
         });
-        let date = detail.release_date.or(detail.first_air_date).unwrap_or_default();
-        let runtime = detail.runtime.or_else(|| detail.episode_run_time.and_then(|r| r.into_iter().next()));
+        let date = detail
+            .release_date
+            .or(detail.first_air_date)
+            .unwrap_or_default();
+        let runtime = detail
+            .runtime
+            .or_else(|| detail.episode_run_time.and_then(|r| r.into_iter().next()));
         Ok(Details {
             title: Title {
                 id,
@@ -350,7 +411,9 @@ impl Api {
             logo,
             runtime,
             tagline: detail.tagline.unwrap_or_default(),
-            cast: credits.map(|c| c.cast.into_iter().take(6).map(|m| m.name).collect()).unwrap_or_default(),
+            cast: credits
+                .map(|c| c.cast.into_iter().take(6).map(|m| m.name).collect())
+                .unwrap_or_default(),
             seasons: detail.number_of_seasons.unwrap_or(0),
         })
     }
@@ -358,9 +421,26 @@ impl Api {
     fn anime_details(&self, id: u64) -> Result<Details> {
         let url = format!("{}/miruro/info/{}", self.host, id);
         let info: AnimeInfoFull = self.client.get(url).send()?.json()?;
-        let name = info.title.as_ref().and_then(|t| t.english.clone().or_else(|| t.romaji.clone())).unwrap_or_default();
-        let overview = info.description.map(|d| strip_html(&d)).filter(|d| !d.is_empty());
-        let studios = info.studios.map(|s| s.nodes.into_iter().filter(|n| n.is_animation_studio).map(|n| n.name).take(3).collect()).unwrap_or_default();
+        let name = info
+            .title
+            .as_ref()
+            .and_then(|t| t.english.clone().or_else(|| t.romaji.clone()))
+            .unwrap_or_default();
+        let overview = info
+            .description
+            .map(|d| strip_html(&d))
+            .filter(|d| !d.is_empty());
+        let studios = info
+            .studios
+            .map(|s| {
+                s.nodes
+                    .into_iter()
+                    .filter(|n| n.is_animation_studio)
+                    .map(|n| n.name)
+                    .take(3)
+                    .collect()
+            })
+            .unwrap_or_default();
         Ok(Details {
             title: Title {
                 year: info.season_year.map(|y| y.to_string()).unwrap_or_default(),
@@ -368,7 +448,12 @@ impl Api {
                 overview,
                 backdrop_path: info.banner_image.filter(|s| !s.is_empty()),
                 genres: info.genres.unwrap_or_default(),
-                ..Title::bare(id, Kind::Anime, name, info.cover_image.and_then(|c| c.extra_large.or(c.large)))
+                ..Title::bare(
+                    id,
+                    Kind::Anime,
+                    name,
+                    info.cover_image.and_then(|c| c.extra_large.or(c.large)),
+                )
             },
             logo: None,
             runtime: info.duration,
@@ -414,27 +499,46 @@ impl Api {
             let jobs: Vec<_> = SOURCES
                 .iter()
                 .filter(|src| !(movie && **src == "vidbolt"))
-                .map(|src| scope.spawn(move || self.extract(src, path, title, start).filter(playable)))
+                .map(|src| {
+                    scope.spawn(move || self.extract(src, path, title, start).filter(playable))
+                })
                 .collect();
             jobs.into_iter().map(|j| j.join().ok().flatten()).collect()
         });
         found.into_iter().flatten().collect()
     }
 
-    pub fn extract(&self, src: &str, path: &str, title: &str, start: Option<f64>) -> Option<Stream> {
+    pub fn extract(
+        &self,
+        src: &str,
+        path: &str,
+        title: &str,
+        start: Option<f64>,
+    ) -> Option<Stream> {
         let url = format!("{}/proxy/extractor/{}/{}", self.host, src, path);
-        let resp = self.client.get(url).timeout(Duration::from_secs(25)).send().ok()?;
+        let resp = self
+            .client
+            .get(url)
+            .timeout(Duration::from_secs(25))
+            .send()
+            .ok()?;
         if !resp.status().is_success() {
             return None;
         }
         let body: Extractor = resp.json().ok()?;
-        let referer = body.headers.and_then(|h| h.get("Referer").or_else(|| h.get("referer")).cloned());
+        let referer = body
+            .headers
+            .and_then(|h| h.get("Referer").or_else(|| h.get("referer")).cloned());
         let (raw, hls) = match (body.m3u8, body.mp4) {
             (Some(m), _) => (m, true),
             (None, Some(m)) => (m, false),
             _ => return None,
         };
-        let url = if raw.starts_with('/') { format!("{}{}", self.host, raw) } else { raw };
+        let url = if raw.starts_with('/') {
+            format!("{}{}", self.host, raw)
+        } else {
+            raw
+        };
         Some(Stream {
             source: src.to_string(),
             url,
@@ -449,13 +553,23 @@ impl Api {
 
     pub fn poster(&self, poster_path: &str) -> Option<Vec<u8>> {
         let resp = if poster_path.starts_with("/proxy") {
-            // already a proxied path (anilist covers come back like /proxy/image?url=...)
-            self.client.get(format!("{}{}", self.host, poster_path)).send().ok()?
+            self.client
+                .get(format!("{}{}", self.host, poster_path))
+                .send()
+                .ok()?
         } else if poster_path.starts_with("http") {
-            self.client.get(format!("{}/proxy/image", self.host)).query(&[("url", poster_path)]).send().ok()?
+            self.client
+                .get(format!("{}/proxy/image", self.host))
+                .query(&[("url", poster_path)])
+                .send()
+                .ok()?
         } else {
             let src = format!("https://image.tmdb.org/t/p/w500{poster_path}");
-            self.client.get(format!("{}/proxy/image", self.host)).query(&[("url", &src)]).send().ok()?
+            self.client
+                .get(format!("{}/proxy/image", self.host))
+                .query(&[("url", &src)])
+                .send()
+                .ok()?
         };
         if !resp.status().is_success() {
             return None;
@@ -465,8 +579,17 @@ impl Api {
 
     pub fn anime_search(&self, query: &str) -> Result<Vec<Title>> {
         let url = format!("{}/miruro/search", self.host);
-        let resp: AnimeSearchResp = self.client.get(url).query(&[("query", query)]).send()?.json()?;
-        Ok(resp.results.into_iter().map(AnimeItem::into_title).collect())
+        let resp: AnimeSearchResp = self
+            .client
+            .get(url)
+            .query(&[("query", query)])
+            .send()?
+            .json()?;
+        Ok(resp
+            .results
+            .into_iter()
+            .map(AnimeItem::into_title)
+            .collect())
     }
 
     pub fn anime_trending(&self) -> Result<Vec<Title>> {
@@ -475,13 +598,26 @@ impl Api {
 
     pub fn anime_trending_page(&self, page: u32) -> Result<Vec<Title>> {
         let url = format!("{}/miruro/trending", self.host);
-        let resp: AnimeSearchResp = self.client.get(url).query(&[("page", page.to_string())]).send()?.json()?;
-        Ok(resp.results.into_iter().map(AnimeItem::into_title).collect())
+        let resp: AnimeSearchResp = self
+            .client
+            .get(url)
+            .query(&[("page", page.to_string())])
+            .send()?
+            .json()?;
+        Ok(resp
+            .results
+            .into_iter()
+            .map(AnimeItem::into_title)
+            .collect())
     }
 
     pub fn log_event(&self, body: &serde_json::Value) {
         let url = format!("{}/api/playerlog", self.host);
-        let _ = self.authed(self.client.post(url)).timeout(Duration::from_secs(10)).json(body).send();
+        let _ = self
+            .authed(self.client.post(url))
+            .timeout(Duration::from_secs(10))
+            .json(body)
+            .send();
     }
 
     pub fn anime_chain(&self, anilist_id: u64) -> Vec<AnimeSeason> {
@@ -499,8 +635,13 @@ impl Api {
     pub fn anime_search_merged(&self, query: &str) -> Vec<Title> {
         let found = self.anime_search(query).unwrap_or_default();
         let chains: Vec<Vec<AnimeSeason>> = std::thread::scope(|s| {
-            let jobs: Vec<_> = found.iter().map(|t| s.spawn(move || self.anime_chain(t.id))).collect();
-            jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
+            let jobs: Vec<_> = found
+                .iter()
+                .map(|t| s.spawn(move || self.anime_chain(t.id)))
+                .collect();
+            jobs.into_iter()
+                .map(|j| j.join().unwrap_or_default())
+                .collect()
         });
         let mut out: Vec<Title> = Vec::new();
         let mut seen = HashSet::new();
@@ -517,9 +658,18 @@ impl Api {
             let total: u64 = chain.iter().map(|c| c.episodes).sum();
             out.push(Title {
                 year: first.year.clone(),
-                overview: Some(format!("{} · {}", plural(chain.len() as u64, "season"), plural(total, "episode"))),
+                overview: Some(format!(
+                    "{} · {}",
+                    plural(chain.len() as u64, "season"),
+                    plural(total, "episode")
+                )),
                 seasons: chain.clone(),
-                ..Title::bare(root, Kind::Anime, first.title.clone(), first.cover.clone().or(title.poster_path))
+                ..Title::bare(
+                    root,
+                    Kind::Anime,
+                    first.title.clone(),
+                    first.cover.clone().or(title.poster_path),
+                )
             });
         }
         out
@@ -533,8 +683,19 @@ impl Api {
             .providers
             .into_iter()
             .map(|(name, raw)| {
-                let eps = if dub { raw.episodes.dub } else { raw.episodes.sub };
-                AnimeProvider { name, episodes: eps.unwrap_or_default().into_iter().map(AnimeEpRaw::into_ep).collect() }
+                let eps = if dub {
+                    raw.episodes.dub
+                } else {
+                    raw.episodes.sub
+                };
+                AnimeProvider {
+                    name,
+                    episodes: eps
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(AnimeEpRaw::into_ep)
+                        .collect(),
+                }
             })
             .filter(|p| !p.episodes.is_empty() && order.contains(&p.name.as_str()))
             .collect();
@@ -544,13 +705,20 @@ impl Api {
 
     pub fn anime_stream(&self, provider: &str, episode_id: &str, title: &str) -> Option<Stream> {
         let url = format!("{}/miruro/{}", self.host, episode_id);
-        let resp = self.client.get(url).timeout(Duration::from_secs(30)).send().ok()?;
+        let resp = self
+            .client
+            .get(url)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .ok()?;
         if !resp.status().is_success() {
             return None;
         }
         let body: AnimeSourcesResp = resp.json().ok()?;
         let chosen = body.streams.into_iter().find(|s| !s.url.is_empty())?;
-        let hls = chosen.kind.eq_ignore_ascii_case("hls") || chosen.url.contains(".m3u8") || chosen.kind.is_empty();
+        let hls = chosen.kind.eq_ignore_ascii_case("hls")
+            || chosen.url.contains(".m3u8")
+            || chosen.kind.is_empty();
         let subs = body
             .tracks
             .into_iter()
@@ -561,7 +729,10 @@ impl Api {
                 lang: t.label.or(t.lang).unwrap_or_default(),
             })
             .collect();
-        let intro = body.intro.filter(|i| i.end > i.start).map(|i| (i.start, i.end));
+        let intro = body
+            .intro
+            .filter(|i| i.end > i.start)
+            .map(|i| (i.start, i.end));
         Some(Stream {
             source: provider.to_string(),
             url: chosen.url,
@@ -600,7 +771,13 @@ impl Api {
 
     pub fn subtitles(&self, path: &str) -> Vec<Subtitle> {
         let url = format!("{}/proxy/vidcore-subs/{}", self.host, path);
-        let Some(body) = self.client.get(url).send().ok().and_then(|r| r.json::<SubsResp>().ok()) else {
+        let Some(body) = self
+            .client
+            .get(url)
+            .send()
+            .ok()
+            .and_then(|r| r.json::<SubsResp>().ok())
+        else {
             return Vec::new();
         };
         body.subtitles
@@ -617,7 +794,11 @@ impl Api {
     pub fn register(&self, username: &str, password: &str) -> Result<String> {
         self.ensure_secure()?;
         let url = format!("{}/api/auth/register", self.host);
-        let resp = self.client.post(url).json(&Credentials { username, password }).send()?;
+        let resp = self
+            .client
+            .post(url)
+            .json(&Credentials { username, password })
+            .send()?;
         if !resp.status().is_success() {
             bail!("sign up failed (username may be taken, or the password is too short)");
         }
@@ -627,7 +808,11 @@ impl Api {
     pub fn login(&self, username: &str, password: &str) -> Result<String> {
         self.ensure_secure()?;
         let url = format!("{}/api/auth/login", self.host);
-        let resp = self.client.post(url).json(&Credentials { username, password }).send()?;
+        let resp = self
+            .client
+            .post(url)
+            .json(&Credentials { username, password })
+            .send()?;
         if !resp.status().is_success() {
             bail!("login failed (check username and password)");
         }
@@ -665,8 +850,21 @@ impl Api {
                 "anime" => Kind::Anime,
                 _ => Kind::Movie,
             };
-            let (show, poster) = if kind == Kind::Anime { self.anime_info(id) } else { self.title_info(&entry.kind, id) }
-                .unwrap_or_else(|| (entry.title.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| "untitled".into()), None));
+            let (show, poster) = if kind == Kind::Anime {
+                self.anime_info(id)
+            } else {
+                self.title_info(&entry.kind, id)
+            }
+            .unwrap_or_else(|| {
+                (
+                    entry
+                        .title
+                        .clone()
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or_else(|| "untitled".into()),
+                    None,
+                )
+            });
             rows.push(ContinueRow {
                 id,
                 kind,
@@ -700,14 +898,21 @@ impl Api {
     }
 
     pub fn sources_for(movie: bool) -> Vec<&'static str> {
-        SOURCES.iter().copied().filter(|s| !(movie && *s == "vidbolt")).collect()
+        SOURCES
+            .iter()
+            .copied()
+            .filter(|s| !(movie && *s == "vidbolt"))
+            .collect()
     }
 
     fn title_info(&self, kind: &str, id: u64) -> Option<(String, Option<String>)> {
         let slug = if kind == "tv" { "tv" } else { "movie" };
         let url = format!("{}/proxy/tmdb/{}/{}", self.host, slug, id);
         let resp: NameResp = self.client.get(url).send().ok()?.json().ok()?;
-        Some((resp.name.or(resp.title)?, resp.poster_path.filter(|p| !p.is_empty())))
+        Some((
+            resp.name.or(resp.title)?,
+            resp.poster_path.filter(|p| !p.is_empty()),
+        ))
     }
 
     fn authed(&self, builder: RequestBuilder) -> RequestBuilder {
@@ -724,7 +929,10 @@ impl Api {
         {
             return Ok(());
         }
-        bail!("refusing to send credentials over an insecure connection: {}\nuse an https host", self.host)
+        bail!(
+            "refusing to send credentials over an insecure connection: {}\nuse an https host",
+            self.host
+        )
     }
 }
 
@@ -786,7 +994,8 @@ pub fn playable(stream: &Stream) -> bool {
         let mut url = stream.url.clone();
         let mut text = net::send_with(&url, referer, None, 2)?.text()?;
         if hls::is_master(&text) {
-            let variant = hls::best(hls::variants(&text, &url), 1080).ok_or_else(|| anyhow!("empty master"))?;
+            let variant = hls::best(hls::variants(&text, &url), 1080)
+                .ok_or_else(|| anyhow!("empty master"))?;
             url = variant.url;
             text = net::send_with(&url, referer, None, 2)?.text()?;
         }
@@ -795,7 +1004,8 @@ pub fn playable(stream: &Stream) -> bool {
             .map(str::trim)
             .find(|l| !l.is_empty() && !l.starts_with('#'))
             .ok_or_else(|| anyhow!("empty playlist"))?;
-        let bytes = net::send_with(&net::join(&url, segment), referer, Some("bytes=0-4095"), 2)?.bytes()?;
+        let bytes =
+            net::send_with(&net::join(&url, segment), referer, Some("bytes=0-4095"), 2)?.bytes()?;
         Ok(net::looks_like_video(&bytes))
     };
     check().unwrap_or(false)
@@ -803,7 +1013,10 @@ pub fn playable(stream: &Stream) -> bool {
 
 pub fn pick_subs(all: Vec<Subtitle>, pref: &str) -> Vec<Subtitle> {
     let pref = pref.to_lowercase();
-    let mut subs: Vec<_> = all.into_iter().filter(|s| lang_matches(&s.lang, &pref) || lang_matches(&s.lang, "en")).collect();
+    let mut subs: Vec<_> = all
+        .into_iter()
+        .filter(|s| lang_matches(&s.lang, &pref) || lang_matches(&s.lang, "en"))
+        .collect();
     subs.sort_by_key(|s| !lang_matches(&s.lang, &pref));
     subs.truncate(3);
     subs
@@ -866,7 +1079,10 @@ impl SearchItem {
             None => fallback?,
         };
         let name = self.title.or(self.name)?;
-        let date = self.release_date.or(self.first_air_date).unwrap_or_default();
+        let date = self
+            .release_date
+            .or(self.first_air_date)
+            .unwrap_or_default();
         let year = date.split('-').next().unwrap_or_default().to_string();
         Some(Title {
             id: self.id,
@@ -878,7 +1094,12 @@ impl SearchItem {
             poster_path: self.poster_path.filter(|s| !s.is_empty()),
             seasons: Vec::new(),
             backdrop_path: self.backdrop_path.filter(|s| !s.is_empty()),
-            genres: self.genre_ids.iter().filter_map(|g| genre_name(*g)).map(str::to_string).collect(),
+            genres: self
+                .genre_ids
+                .iter()
+                .filter_map(|g| genre_name(*g))
+                .map(str::to_string)
+                .collect(),
         })
     }
 }
@@ -959,7 +1180,9 @@ struct Studio {
     is_animation_studio: bool,
 }
 
-fn opt_num<'de, D: serde::Deserializer<'de>, T: TryFrom<u64>>(d: D) -> std::result::Result<Option<T>, D::Error> {
+fn opt_num<'de, D: serde::Deserializer<'de>, T: TryFrom<u64>>(
+    d: D,
+) -> std::result::Result<Option<T>, D::Error> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Raw {
@@ -986,7 +1209,11 @@ pub fn strip_html(text: &str) -> String {
             _ => {}
         }
     }
-    out.replace("&quot;", "\"").replace("&#039;", "'").replace("&amp;", "&").trim().to_string()
+    out.replace("&quot;", "\"")
+        .replace("&#039;", "'")
+        .replace("&amp;", "&")
+        .trim()
+        .to_string()
 }
 
 #[derive(Deserialize)]
@@ -1091,7 +1318,11 @@ pub fn merge_episodes(providers: &[AnimeProvider]) -> Vec<AnimeEpisode> {
             match merged.iter_mut().find(|m| m.number == ep.number) {
                 Some(m) if m.title.is_none() => m.title = ep.title.clone(),
                 Some(_) => {}
-                None => merged.push(AnimeEpisode { id: ep.id.clone(), number: ep.number, title: ep.title.clone() }),
+                None => merged.push(AnimeEpisode {
+                    id: ep.id.clone(),
+                    number: ep.number,
+                    title: ep.title.clone(),
+                }),
             }
         }
     }
@@ -1102,7 +1333,12 @@ pub fn merge_episodes(providers: &[AnimeProvider]) -> Vec<AnimeEpisode> {
 pub fn episode_sources(providers: &[AnimeProvider], number: f64) -> Vec<(String, String)> {
     providers
         .iter()
-        .filter_map(|p| p.episodes.iter().find(|e| e.number == number).map(|e| (p.name.clone(), e.id.clone())))
+        .filter_map(|p| {
+            p.episodes
+                .iter()
+                .find(|e| e.number == number)
+                .map(|e| (p.name.clone(), e.id.clone()))
+        })
         .collect()
 }
 
@@ -1193,7 +1429,11 @@ struct AnimeEpRaw {
 
 impl AnimeEpRaw {
     fn into_ep(self) -> AnimeEpisode {
-        AnimeEpisode { id: self.id, number: self.number, title: self.title }
+        AnimeEpisode {
+            id: self.id,
+            number: self.number,
+            title: self.title,
+        }
     }
 }
 

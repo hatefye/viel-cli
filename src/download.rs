@@ -25,7 +25,10 @@ pub struct Job {
 
 pub fn movie_job(title: &Title) -> Job {
     Job {
-        target: Target::Media { path: title.id.to_string(), movie: true },
+        target: Target::Media {
+            path: title.id.to_string(),
+            movie: true,
+        },
         label: title.name.clone(),
         filename: sanitize(&movie_name(title)),
     }
@@ -33,9 +36,15 @@ pub fn movie_job(title: &Title) -> Job {
 
 pub fn tv_job(title: &Title, season: u32, episode: u32, name: &str) -> Job {
     Job {
-        target: Target::Media { path: format!("{}/{}/{}", title.id, season, episode), movie: false },
+        target: Target::Media {
+            path: format!("{}/{}/{}", title.id, season, episode),
+            movie: false,
+        },
         label: format!("{} S{season:02}E{episode:02} · {name}", title.name),
-        filename: sanitize(&format!("{} S{season:02}E{episode:02} {name}.mkv", title.name)),
+        filename: sanitize(&format!(
+            "{} S{season:02}E{episode:02} {name}.mkv",
+            title.name
+        )),
     }
 }
 
@@ -54,8 +63,15 @@ const CONNECTIONS: usize = 12;
 pub enum Status {
     Queued,
     Resolving,
-    Fetching { source: String, done: usize, total: usize, bytes: u64 },
-    Remuxing { source: String },
+    Fetching {
+        source: String,
+        done: usize,
+        total: usize,
+        bytes: u64,
+    },
+    Remuxing {
+        source: String,
+    },
     Saved(PathBuf),
     Failed(String),
 }
@@ -98,7 +114,10 @@ pub fn run_jobs(api: &Api, cfg: &Config, jobs: Vec<Job>) -> Result<()> {
             thread::sleep(Duration::from_millis(250));
         }
     });
-    let failed = states.iter().filter(|s| matches!(*s.lock().unwrap(), Status::Failed(_))).count();
+    let failed = states
+        .iter()
+        .filter(|s| matches!(*s.lock().unwrap(), Status::Failed(_)))
+        .count();
     if failed > 0 {
         ui::pause();
     } else {
@@ -117,7 +136,11 @@ impl View {
     fn draw(&mut self, jobs: &[Job], states: &[Mutex<Status>]) -> bool {
         use crossterm::cursor::MoveUp;
         use crossterm::terminal::{size, Clear, ClearType};
-        let width = size().map(|(c, _)| c as usize).unwrap_or(100).saturating_sub(1).max(20);
+        let width = size()
+            .map(|(c, _)| c as usize)
+            .unwrap_or(100)
+            .saturating_sub(1)
+            .max(20);
         let mut out = std::io::stdout();
         if self.drawn > 0 {
             let _ = crossterm::execute!(out, MoveUp(self.drawn), Clear(ClearType::FromCursorDown));
@@ -133,7 +156,18 @@ impl View {
                     saved += 1;
                     if !self.logged[i] {
                         self.logged[i] = true;
-                        println!("{}", clip(&format!("✓ {tag} · {}", path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default()), width));
+                        println!(
+                            "{}",
+                            clip(
+                                &format!(
+                                    "✓ {tag} · {}",
+                                    path.file_name()
+                                        .map(|n| n.to_string_lossy())
+                                        .unwrap_or_default()
+                                ),
+                                width
+                            )
+                        );
                     }
                 }
                 Status::Failed(err) => {
@@ -144,9 +178,15 @@ impl View {
                     }
                 }
                 Status::Resolving => lines.push(format!("  {tag} · finding source")),
-                Status::Fetching { source, done, total, bytes } => {
-                    lines.push(format!("  {tag} · {source} · {done}/{total} parts · {:.0} MB", *bytes as f64 / 1_048_576.0))
-                }
+                Status::Fetching {
+                    source,
+                    done,
+                    total,
+                    bytes,
+                } => lines.push(format!(
+                    "  {tag} · {source} · {done}/{total} parts · {:.0} MB",
+                    *bytes as f64 / 1_048_576.0
+                )),
                 Status::Remuxing { source } => lines.push(format!("  {tag} · {source} · remuxing")),
             }
         }
@@ -182,27 +222,52 @@ fn ensure_ffmpeg() -> Option<String> {
     found
 }
 
-fn run_job(api: &Api, cfg: &Config, ffmpeg: &str, dir: &Path, job: &Job, set: &(dyn Fn(Status) + Sync)) -> Result<PathBuf> {
+fn run_job(
+    api: &Api,
+    cfg: &Config,
+    ffmpeg: &str,
+    dir: &Path,
+    job: &Job,
+    set: &(dyn Fn(Status) + Sync),
+) -> Result<PathBuf> {
     let out = dir.join(&job.filename);
     set(Status::Resolving);
-    let streams: Box<dyn Iterator<Item = Stream> + '_> = match &job.target {
-        Target::Media { path, movie } => {
-            let subs = api.subtitles(path);
-            Box::new(api.resolve(path, &job.label, None, *movie).into_iter().map(move |mut s| {
-                s.subs = subs.clone();
-                s
-            }))
-        }
-        Target::Anime(list) => Box::new(list.iter().filter_map(|(p, id)| api.anime_stream(p, id, &job.label))),
-    };
+    let streams: Box<dyn Iterator<Item = Stream> + '_> =
+        match &job.target {
+            Target::Media { path, movie } => {
+                let subs = api.subtitles(path);
+                Box::new(api.resolve(path, &job.label, None, *movie).into_iter().map(
+                    move |mut s| {
+                        s.subs = subs.clone();
+                        s
+                    },
+                ))
+            }
+            Target::Anime(list) => Box::new(
+                list.iter()
+                    .filter_map(|(p, id)| api.anime_stream(p, id, &job.label)),
+            ),
+        };
     let mut last = None;
     for stream in streams {
         let source = stream.source.clone();
-        set(Status::Fetching { source: source.clone(), done: 0, total: 0, bytes: 0 });
+        set(Status::Fetching {
+            source: source.clone(),
+            done: 0,
+            total: 0,
+            bytes: 0,
+        });
         let progress = |p: Progress| {
             set(match p {
-                Progress::Parts(done, total, bytes) => Status::Fetching { source: source.clone(), done, total, bytes },
-                Progress::Remux => Status::Remuxing { source: source.clone() },
+                Progress::Parts(done, total, bytes) => Status::Fetching {
+                    source: source.clone(),
+                    done,
+                    total,
+                    bytes,
+                },
+                Progress::Remux => Status::Remuxing {
+                    source: source.clone(),
+                },
             })
         };
         match grab(&stream, ffmpeg, &out, cfg, &progress) {
@@ -210,7 +275,10 @@ fn run_job(api: &Api, cfg: &Config, ffmpeg: &str, dir: &Path, job: &Job, set: &(
             Err(err) => last = Some(format!("{source}: {err}")),
         }
     }
-    bail!("{}", last.unwrap_or_else(|| "no source has this one".into()))
+    bail!(
+        "{}",
+        last.unwrap_or_else(|| "no source has this one".into())
+    )
 }
 
 struct Task {
@@ -219,21 +287,39 @@ struct Task {
     ts: bool,
 }
 
-pub fn grab(stream: &Stream, ffmpeg: &str, out: &Path, cfg: &Config, progress: &(dyn Fn(Progress) + Sync)) -> Result<()> {
-    let work = std::env::temp_dir().join(format!("viel-dl-{}-{}", std::process::id(), rand::random::<u32>()));
+pub fn grab(
+    stream: &Stream,
+    ffmpeg: &str,
+    out: &Path,
+    cfg: &Config,
+    progress: &(dyn Fn(Progress) + Sync),
+) -> Result<()> {
+    let work = std::env::temp_dir().join(format!(
+        "viel-dl-{}-{}",
+        std::process::id(),
+        rand::random::<u32>()
+    ));
     fs::create_dir_all(&work)?;
     let result = grab_into(stream, ffmpeg, out, &work, cfg, progress);
     let _ = fs::remove_dir_all(&work);
     result
 }
 
-fn grab_into(stream: &Stream, ffmpeg: &str, out: &Path, work: &Path, cfg: &Config, progress: &(dyn Fn(Progress) + Sync)) -> Result<()> {
+fn grab_into(
+    stream: &Stream,
+    ffmpeg: &str,
+    out: &Path,
+    work: &Path,
+    cfg: &Config,
+    progress: &(dyn Fn(Progress) + Sync),
+) -> Result<()> {
     let referer = stream.referer.as_deref();
     let input = if stream.hls {
         let mut tasks = Vec::new();
         let text = net::text(&stream.url, referer)?;
         let main = if hls::is_master(&text) {
-            let variant = hls::best(hls::variants(&text, &stream.url), cfg.max_height).ok_or_else(|| anyhow!("no video variant"))?;
+            let variant = hls::best(hls::variants(&text, &stream.url), cfg.max_height)
+                .ok_or_else(|| anyhow!("no video variant"))?;
             let video = localize(&variant.url, referer, work, "v", &mut tasks)?;
             let audio = variant
                 .audio
@@ -242,9 +328,15 @@ fn grab_into(stream: &Stream, ffmpeg: &str, out: &Path, work: &Path, cfg: &Confi
             match audio {
                 Some(track) => {
                     let audio = localize(&track.url, referer, work, "a", &mut tasks)?;
-                    let media = track.line.replace(&format!("URI=\"{}\"", hls::raw_uri(&track.line)), &format!("URI=\"{audio}\""));
+                    let media = track.line.replace(
+                        &format!("URI=\"{}\"", hls::raw_uri(&track.line)),
+                        &format!("URI=\"{audio}\""),
+                    );
                     let inf = strip_attrs(&variant.inf);
-                    fs::write(work.join("master.m3u8"), format!("#EXTM3U\n#EXT-X-VERSION:3\n{media}\n{inf}\n{video}\n"))?;
+                    fs::write(
+                        work.join("master.m3u8"),
+                        format!("#EXTM3U\n#EXT-X-VERSION:3\n{media}\n{inf}\n{video}\n"),
+                    )?;
                     "master.m3u8".to_string()
                 }
                 None => video,
@@ -261,7 +353,12 @@ fn grab_into(stream: &Stream, ffmpeg: &str, out: &Path, work: &Path, cfg: &Confi
     let sub = stream
         .subs
         .iter()
-        .find(|s| s.lang.to_lowercase().starts_with(&cfg.subtitle_lang.to_lowercase()) || lang_name(&s.lang, &cfg.subtitle_lang))
+        .find(|s| {
+            s.lang
+                .to_lowercase()
+                .starts_with(&cfg.subtitle_lang.to_lowercase())
+                || lang_name(&s.lang, &cfg.subtitle_lang)
+        })
         .and_then(|s| {
             let body = net::bytes(&s.url, s.referer.as_deref()).ok()?;
             let ext = if body.starts_with(b"WEBVTT") || body.starts_with(b"\xEF\xBB\xBFWEBVTT") {
@@ -289,14 +386,27 @@ fn grab_into(stream: &Stream, ffmpeg: &str, out: &Path, work: &Path, cfg: &Confi
 
 fn remux(ffmpeg: &str, input: &str, sub: Option<&Path>, lang: &str, out: &Path) -> Result<()> {
     let mut cmd = Command::new(ffmpeg);
-    cmd.args(["-y", "-hide_banner", "-loglevel", "error", "-allowed_extensions", "ALL"]);
-    cmd.args(["-protocol_whitelist", "file,crypto,data,http,tcp", "-i", input]);
+    cmd.args([
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-allowed_extensions",
+        "ALL",
+    ]);
+    cmd.args([
+        "-protocol_whitelist",
+        "file,crypto,data,http,tcp",
+        "-i",
+        input,
+    ]);
     if let Some(sub) = sub {
         cmd.arg("-i").arg(sub);
     }
     cmd.args(["-map", "0:v:0?", "-map", "0:a:0?"]);
     if sub.is_some() {
-        cmd.args(["-map", "1:0", "-metadata:s:s:0"]).arg(format!("language={lang}"));
+        cmd.args(["-map", "1:0", "-metadata:s:s:0"])
+            .arg(format!("language={lang}"));
     }
     cmd.args(["-c", "copy"]).arg(out);
     let status = cmd.status().context("ffmpeg failed to run")?;
@@ -314,12 +424,24 @@ fn strip_attrs(inf: &str) -> String {
         .join(",")
 }
 
-fn localize(url: &str, referer: Option<&str>, work: &Path, tag: &str, tasks: &mut Vec<Task>) -> Result<String> {
+fn localize(
+    url: &str,
+    referer: Option<&str>,
+    work: &Path,
+    tag: &str,
+    tasks: &mut Vec<Task>,
+) -> Result<String> {
     let text = net::text(url, referer)?;
     localize_text(&text, url, work, tag, tasks)
 }
 
-fn localize_text(text: &str, base: &str, work: &Path, tag: &str, tasks: &mut Vec<Task>) -> Result<String> {
+fn localize_text(
+    text: &str,
+    base: &str,
+    work: &Path,
+    tag: &str,
+    tasks: &mut Vec<Task>,
+) -> Result<String> {
     if hls::is_master(text) {
         bail!("nested master playlist");
     }
@@ -332,7 +454,11 @@ fn localize_text(text: &str, base: &str, work: &Path, tag: &str, tasks: &mut Vec
             Part::Init => (format!("{tag}{n:05}-init.mp4"), false),
             Part::Playlist => return abs,
         };
-        tasks.push(Task { url: abs, file: work.join(&name), ts });
+        tasks.push(Task {
+            url: abs,
+            file: work.join(&name),
+            ts,
+        });
         name
     });
     let name = format!("{tag}.m3u8");
@@ -347,7 +473,10 @@ struct Gate {
 
 fn gate() -> &'static Gate {
     static GATE: OnceLock<Gate> = OnceLock::new();
-    GATE.get_or_init(|| Gate { free: Mutex::new(CONNECTIONS), ready: Condvar::new() })
+    GATE.get_or_init(|| Gate {
+        free: Mutex::new(CONNECTIONS),
+        ready: Condvar::new(),
+    })
 }
 
 struct Permit;
@@ -371,7 +500,11 @@ impl Drop for Permit {
     }
 }
 
-fn fetch_all(tasks: &[Task], referer: Option<&str>, progress: &(dyn Fn(Progress) + Sync)) -> Result<()> {
+fn fetch_all(
+    tasks: &[Task],
+    referer: Option<&str>,
+    progress: &(dyn Fn(Progress) + Sync),
+) -> Result<()> {
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
     let bytes = AtomicU64::new(0);
@@ -391,12 +524,17 @@ fn fetch_all(tasks: &[Task], referer: Option<&str>, progress: &(dyn Fn(Progress)
                     };
                     match fetched {
                         Ok(body) => {
-                            let body = if task.ts { net::unmask_ts(&body) } else { &body[..] };
+                            let body = if task.ts {
+                                net::unmask_ts(&body)
+                            } else {
+                                &body[..]
+                            };
                             if let Err(err) = fs::write(&task.file, body) {
                                 *error.lock().unwrap() = Some(anyhow!(err));
                                 failed.store(true, Ordering::Relaxed);
                             }
-                            let b = bytes.fetch_add(body.len() as u64, Ordering::Relaxed) + body.len() as u64;
+                            let b = bytes.fetch_add(body.len() as u64, Ordering::Relaxed)
+                                + body.len() as u64;
                             let d = done.fetch_add(1, Ordering::Relaxed) + 1;
                             progress(Progress::Parts(d, total, b));
                         }
@@ -416,7 +554,17 @@ fn fetch_all(tasks: &[Task], referer: Option<&str>, progress: &(dyn Fn(Progress)
 }
 
 fn lang_name(lang: &str, pref: &str) -> bool {
-    let names = [("en", "english"), ("es", "spanish"), ("fr", "french"), ("pt", "portuguese"), ("de", "german"), ("it", "italian"), ("ja", "japanese"), ("ar", "arabic"), ("ru", "russian")];
+    let names = [
+        ("en", "english"),
+        ("es", "spanish"),
+        ("fr", "french"),
+        ("pt", "portuguese"),
+        ("de", "german"),
+        ("it", "italian"),
+        ("ja", "japanese"),
+        ("ar", "arabic"),
+        ("ru", "russian"),
+    ];
     names
         .iter()
         .find(|(code, _)| *code == pref.to_lowercase())
@@ -433,7 +581,13 @@ fn movie_name(title: &Title) -> String {
 
 fn sanitize(name: &str) -> String {
     name.chars()
-        .map(|c| if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') { '_' } else { c })
+        .map(|c| {
+            if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect::<String>()
         .trim()
         .to_string()

@@ -14,7 +14,8 @@ pub struct Watched {
 
 impl Watched {
     pub fn finished(&self) -> bool {
-        self.duration > 0.0 && (self.duration - self.position < 180.0 || self.position / self.duration > 0.92)
+        self.duration > 0.0
+            && (self.duration - self.position < 180.0 || self.position / self.duration > 0.92)
     }
 }
 
@@ -24,13 +25,20 @@ pub fn play(player: &str, stream: &Stream, mut progress: impl FnMut(f64, f64)) -
 
     let mut cmd = Command::new(player);
     let referer = stream.referer.as_deref();
-    cmd.arg(if stream.hls { relay::playlist(&stream.url, referer) } else { relay::video(&stream.url, referer) });
+    cmd.arg(if stream.hls {
+        relay::playlist(&stream.url, referer)
+    } else {
+        relay::video(&stream.url, referer)
+    });
     cmd.arg(format!("--force-media-title={}", stream.title));
     cmd.arg("--force-window=immediate");
     cmd.arg("--hls-bitrate=max");
     cmd.arg(format!("--input-ipc-server={}", socket.display()));
     for sub in &stream.subs {
-        cmd.arg(format!("--sub-file={}", relay::subtitle(&sub.url, sub.referer.as_deref())));
+        cmd.arg(format!(
+            "--sub-file={}",
+            relay::subtitle(&sub.url, sub.referer.as_deref())
+        ));
     }
     if !stream.subs.is_empty() {
         cmd.arg("--sub-visibility=yes");
@@ -38,11 +46,14 @@ pub fn play(player: &str, stream: &Stream, mut progress: impl FnMut(f64, f64)) -
     if let Some(start) = stream.start.filter(|s| *s > 0.0) {
         cmd.arg(format!("--start={}", start as u64));
     }
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("could not launch {player}; install it and ensure it is on PATH"))?;
+    let mut child = cmd.spawn().with_context(|| {
+        format!("could not launch {player}; install it and ensure it is on PATH")
+    })?;
 
-    let mut last = Watched { position: 0.0, duration: 0.0 };
+    let mut last = Watched {
+        position: 0.0,
+        duration: 0.0,
+    };
     let mut elapsed = 0u64;
     let mut skipped = stream.intro.is_none();
     let launched = Instant::now();
@@ -55,11 +66,21 @@ pub fn play(player: &str, stream: &Stream, mut progress: impl FnMut(f64, f64)) -
         if !started {
             if ask(&socket, "time-pos").is_some_and(|p| p > 0.0) {
                 started = true;
-                print!("\r\x1b[2K  ▶ started after {:.0}s\n", launched.elapsed().as_secs_f32());
+                print!(
+                    "\r\x1b[2K  ▶ started after {:.0}s\n",
+                    launched.elapsed().as_secs_f32()
+                );
             } else {
                 let a = relay::activity();
-                let what = a.fetching.map(|(w, t)| format!("{w} · {t:.0}s")).unwrap_or_else(|| "waiting for mpv".into());
-                print!("\r\x1b[2K  loading {:.0}s · {} parts · {what}", launched.elapsed().as_secs_f32(), a.served);
+                let what = a
+                    .fetching
+                    .map(|(w, t)| format!("{w} · {t:.0}s"))
+                    .unwrap_or_else(|| "waiting for mpv".into());
+                print!(
+                    "\r\x1b[2K  loading {:.0}s · {} parts · {what}",
+                    launched.elapsed().as_secs_f32(),
+                    a.served
+                );
             }
             let _ = std::io::stdout().flush();
         }
@@ -79,7 +100,10 @@ pub fn play(player: &str, stream: &Stream, mut progress: impl FnMut(f64, f64)) -
         if elapsed >= 10_000 {
             elapsed = 0;
             if let (Some(pos), Some(dur)) = (ask(&socket, "time-pos"), ask(&socket, "duration")) {
-                last = Watched { position: pos, duration: dur };
+                last = Watched {
+                    position: pos,
+                    duration: dur,
+                };
                 progress(pos, dur);
             }
         }
@@ -107,13 +131,18 @@ fn socket_path() -> PathBuf {
 #[cfg(unix)]
 fn connect(socket: &Path) -> Option<Box<dyn ReadWrite>> {
     let conn = std::os::unix::net::UnixStream::connect(socket).ok()?;
-    conn.set_read_timeout(Some(Duration::from_millis(1500))).ok()?;
+    conn.set_read_timeout(Some(Duration::from_millis(1500)))
+        .ok()?;
     Some(Box::new(conn))
 }
 
 #[cfg(windows)]
 fn connect(socket: &Path) -> Option<Box<dyn ReadWrite>> {
-    let file = std::fs::OpenOptions::new().read(true).write(true).open(socket).ok()?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(socket)
+        .ok()?;
     Some(Box::new(file))
 }
 
@@ -122,7 +151,11 @@ impl<T: Read + Write> ReadWrite for T {}
 
 fn ask(socket: &Path, property: &str) -> Option<f64> {
     let mut conn = connect(socket)?;
-    writeln!(conn, "{{\"command\":[\"get_property\",\"{property}\"],\"request_id\":7}}").ok()?;
+    writeln!(
+        conn,
+        "{{\"command\":[\"get_property\",\"{property}\"],\"request_id\":7}}"
+    )
+    .ok()?;
     let reader = BufReader::new(conn);
     for line in reader.lines().map_while(Result::ok).take(50) {
         if let Ok(reply) = serde_json::from_str::<Reply>(&line) {

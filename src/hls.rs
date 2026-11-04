@@ -13,7 +13,11 @@ pub fn is_master(text: &str) -> bool {
 }
 
 fn segment_ext(url: &str, fmp4: bool) -> &'static str {
-    let path = url.split(['?', '#']).next().unwrap_or(url).to_ascii_lowercase();
+    let path = url
+        .split(['?', '#'])
+        .next()
+        .unwrap_or(url)
+        .to_ascii_lowercase();
     let ext = path.rsplit('.').next().unwrap_or("");
     match ext {
         "ts" => "ts",
@@ -118,14 +122,18 @@ pub fn variants(text: &str, base: &str) -> Vec<Variant> {
         .enumerate()
         .filter(|(_, l)| l.starts_with("#EXT-X-STREAM-INF"))
         .filter_map(|(i, l)| {
-            let uri = lines[i + 1..].iter().find(|n| !n.is_empty() && !n.starts_with('#'))?;
+            let uri = lines[i + 1..]
+                .iter()
+                .find(|n| !n.is_empty() && !n.starts_with('#'))?;
             let height = attr(l, "RESOLUTION")
                 .and_then(|r| r.split('x').nth(1).and_then(|h| h.parse().ok()))
                 .unwrap_or(0);
             Some(Variant {
                 url: net::join(base, uri),
                 height,
-                bandwidth: attr(l, "BANDWIDTH").and_then(|b| b.parse().ok()).unwrap_or(0),
+                bandwidth: attr(l, "BANDWIDTH")
+                    .and_then(|b| b.parse().ok())
+                    .unwrap_or(0),
                 inf: l.to_string(),
                 audio: attr(l, "AUDIO"),
             })
@@ -134,7 +142,13 @@ pub fn variants(text: &str, base: &str) -> Vec<Variant> {
 }
 
 pub fn best(mut list: Vec<Variant>, max_height: u32) -> Option<Variant> {
-    list.sort_by_key(|v| (v.height <= max_height || v.height == 0, v.height, v.bandwidth));
+    list.sort_by_key(|v| {
+        (
+            v.height <= max_height || v.height == 0,
+            v.height,
+            v.bandwidth,
+        )
+    });
     list.pop()
 }
 
@@ -161,8 +175,15 @@ pub fn pick_audio(tracks: Vec<Rendition>, lang: &str) -> Option<Rendition> {
     let mut tracks = tracks;
     let idx = tracks
         .iter()
-        .position(|t| !want.is_empty() && (t.lang.starts_with(&want) || t.name.to_lowercase().starts_with(&want)))
-        .or_else(|| tracks.iter().position(|t| t.lang.starts_with("en") || t.name.to_lowercase().starts_with("english")))
+        .position(|t| {
+            !want.is_empty()
+                && (t.lang.starts_with(&want) || t.name.to_lowercase().starts_with(&want))
+        })
+        .or_else(|| {
+            tracks.iter().position(|t| {
+                t.lang.starts_with("en") || t.name.to_lowercase().starts_with("english")
+            })
+        })
         .or_else(|| tracks.iter().position(|t| t.default))
         .or(if tracks.is_empty() { None } else { Some(0) })?;
     Some(tracks.swap_remove(idx))
@@ -174,7 +195,10 @@ pub fn trim_master(text: &str, base: &str, max_height: u32, lang: &str) -> Optio
     let mut inf = variant.inf.clone();
     if let Some(group) = &variant.audio {
         if let Some(track) = pick_audio(audio_tracks(text, base, group), lang) {
-            let line = track.line.replace(&format!("URI=\"{}\"", raw_uri(&track.line)), &format!("URI=\"{}\"", track.url));
+            let line = track.line.replace(
+                &format!("URI=\"{}\"", raw_uri(&track.line)),
+                &format!("URI=\"{}\"", track.url),
+            );
             out.push(line);
         }
     }
@@ -182,9 +206,13 @@ pub fn trim_master(text: &str, base: &str, max_height: u32, lang: &str) -> Optio
         .split(',')
         .filter(|kv| !kv.starts_with("SUBTITLES=") && !kv.starts_with("CLOSED-CAPTIONS="))
         .map(|kv| match kv.split_once('=') {
-            Some((key @ ("BANDWIDTH" | "AVERAGE-BANDWIDTH" | "#EXT-X-STREAM-INF:BANDWIDTH"), value)) => {
-                value.parse::<u64>().map(|b| format!("{key}={}", b * 3)).unwrap_or_else(|_| kv.to_string())
-            }
+            Some((
+                key @ ("BANDWIDTH" | "AVERAGE-BANDWIDTH" | "#EXT-X-STREAM-INF:BANDWIDTH"),
+                value,
+            )) => value
+                .parse::<u64>()
+                .map(|b| format!("{key}={}", b * 3))
+                .unwrap_or_else(|_| kv.to_string()),
             _ => kv.to_string(),
         })
         .collect::<Vec<_>>()
@@ -196,5 +224,8 @@ pub fn trim_master(text: &str, base: &str, max_height: u32, lang: &str) -> Optio
 }
 
 pub fn raw_uri(line: &str) -> &str {
-    line.split("URI=\"").nth(1).and_then(|r| r.split('"').next()).unwrap_or("")
+    line.split("URI=\"")
+        .nth(1)
+        .and_then(|r| r.split('"').next())
+        .unwrap_or("")
 }

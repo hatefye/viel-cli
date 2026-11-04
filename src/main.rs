@@ -9,7 +9,8 @@ use viel::download::{self, Job};
 use viel::screen::{self, Out, Row, Screen};
 use viel::{deps, player, ui};
 
-const HOME_HINT: &str = "type to search · ⏎ open · ^d download · ^a account · ^s settings · esc quit";
+const HOME_HINT: &str =
+    "type to search · ⏎ open · ^d download · ^a account · ^s settings · esc quit";
 const TV_HINT: &str = "⏎ play · d download · D download more · esc back";
 const ANIME_HINT: &str = "⏎ play · d download · D download more · a sub/dub · esc back";
 
@@ -22,14 +23,24 @@ enum Item {
 fn item_row(item: &Item) -> Row {
     match item {
         Item::Title(t) => {
-            let year = if t.year.is_empty() { String::new() } else { format!(" ({})", t.year) };
+            let year = if t.year.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", t.year)
+            };
             let meta = if t.rating > 0.0 {
                 format!("{}{} · ★ {:.1}", t.kind, year, t.rating)
             } else {
                 format!("{}{}", t.kind, year)
             };
             let label = if t.seasons.len() > 1 {
-                format!("{}{} · {} seasons · {}", t.name, year, t.seasons.len(), t.kind)
+                format!(
+                    "{}{} · {} seasons · {}",
+                    t.name,
+                    year,
+                    t.seasons.len(),
+                    t.kind
+                )
             } else {
                 format!("{}{} · {}", t.name, year, t.kind)
             };
@@ -138,7 +149,14 @@ fn app() -> Result<()> {
     if std::env::args().any(|a| a == "--probe") {
         screen::init_images(cfg_cell);
         println!("images: {}", screen::image_info());
-        for k in ["WT_SESSION", "TERM", "TERM_PROGRAM", "KITTY_WINDOW_ID", "VIEL_IMAGES", "VIEL_CELL"] {
+        for k in [
+            "WT_SESSION",
+            "TERM",
+            "TERM_PROGRAM",
+            "KITTY_WINDOW_ID",
+            "VIEL_IMAGES",
+            "VIEL_CELL",
+        ] {
             println!("{k}={}", std::env::var(k).unwrap_or_default());
         }
         return Ok(());
@@ -149,6 +167,7 @@ fn app() -> Result<()> {
     ensure_player(&mut cfg);
     viel::relay::set_max_height(cfg.max_height);
     viel::relay::set_audio_lang(&cfg.subtitle_lang);
+    viel::local::configure(&cfg.host, config::session());
     let mut api = Api::new(&cfg.host, config::session());
     let mut user = api.me().unwrap_or(None);
     let trending: Arc<Mutex<Option<Vec<Title>>>> = Arc::default();
@@ -167,8 +186,16 @@ fn app() -> Result<()> {
         items = home.items;
         match out {
             Out::Back => break,
-            Out::Pick(i) => status = open(&api, &cfg, user.is_some(), items[i].clone(), false).err().map(|e| e.to_string()),
-            Out::Key('d', i) => status = open(&api, &cfg, user.is_some(), items[i].clone(), true).err().map(|e| e.to_string()),
+            Out::Pick(i) => {
+                status = open(&api, &cfg, user.is_some(), items[i].clone(), false)
+                    .err()
+                    .map(|e| e.to_string())
+            }
+            Out::Key('d', i) => {
+                status = open(&api, &cfg, user.is_some(), items[i].clone(), true)
+                    .err()
+                    .map(|e| e.to_string())
+            }
             Out::Key('a', _) => {
                 account(&mut api, &cfg, &mut user)?;
                 items.clear();
@@ -187,13 +214,21 @@ fn app() -> Result<()> {
     Ok(())
 }
 
-fn home_search(api: &Api, signed_in: bool, trending: Arc<Mutex<Option<Vec<Title>>>>) -> screen::Search<Item> {
+fn home_search(
+    api: &Api,
+    signed_in: bool,
+    trending: Arc<Mutex<Option<Vec<Title>>>>,
+) -> screen::Search<Item> {
     let api = api.clone();
     Arc::new(move |q: &str| {
         let q = q.trim();
         if q.is_empty() {
             let mut rows: Vec<Item> = if signed_in {
-                api.continue_rows().unwrap_or_default().into_iter().map(Item::Resume).collect()
+                api.continue_rows()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Item::Resume)
+                    .collect()
             } else {
                 Vec::new()
             };
@@ -201,7 +236,13 @@ fn home_search(api: &Api, signed_in: bool, trending: Arc<Mutex<Option<Vec<Title>
             if cache.is_none() {
                 *cache = Some(api.trending().unwrap_or_default());
             }
-            rows.extend(cache.clone().unwrap_or_default().into_iter().map(Item::Title));
+            rows.extend(
+                cache
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Item::Title),
+            );
             return rows;
         }
         let (media, anime) = std::thread::scope(|s| {
@@ -245,16 +286,31 @@ fn open(api: &Api, cfg: &Config, logged_in: bool, item: Item, download: bool) ->
             let title = Title::bare(r.id, r.kind, r.show.clone(), r.poster.clone());
             match r.kind {
                 Kind::Movie => play_movie(api, cfg, true, &title, r.resume_at()).map(|_| ()),
-                _ => episodes(api, cfg, true, &title, Some((r.season, r.episode, r.resume_at()))),
+                _ => episodes(
+                    api,
+                    cfg,
+                    true,
+                    &title,
+                    Some((r.season, r.episode, r.resume_at())),
+                ),
             }
         }
     }
 }
 
 fn season_row(t: &Title) -> Row {
-    let year = if t.year.is_empty() { String::new() } else { format!(" ({})", t.year) };
+    let year = if t.year.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", t.year)
+    };
     Row {
-        label: format!("{}{} · {}", t.name, year, t.overview.clone().unwrap_or_default()),
+        label: format!(
+            "{}{} · {}",
+            t.name,
+            year,
+            t.overview.clone().unwrap_or_default()
+        ),
         title: t.name.clone(),
         meta: format!("anime{year}"),
         body: t.overview.clone().unwrap_or_default(),
@@ -263,10 +319,20 @@ fn season_row(t: &Title) -> Row {
 }
 
 fn seasons(api: &Api, cfg: &Config, logged_in: bool, title: &Title) -> Result<()> {
-    let list: Vec<Title> = title.seasons.iter().cloned().map(|s| s.into_title(title.poster_path.clone())).collect();
+    let list: Vec<Title> = title
+        .seasons
+        .iter()
+        .cloned()
+        .map(|s| s.into_title(title.poster_path.clone()))
+        .collect();
     let mut cursor = 0;
     loop {
-        let mut sc = Screen::new(&title.name, "⏎ open season · esc back", list.clone(), season_row);
+        let mut sc = Screen::new(
+            &title.name,
+            "⏎ open season · esc back",
+            list.clone(),
+            season_row,
+        );
         sc.cursor = cursor;
         match screen::run(api, &mut sc)? {
             Out::Pick(i) => {
@@ -281,8 +347,15 @@ fn seasons(api: &Api, cfg: &Config, logged_in: bool, title: &Title) -> Result<()
 fn tv_episodes(api: &Api, title: &Title) -> Result<Vec<Ep>> {
     let seasons = api.seasons(title.id)?;
     let lists: Vec<_> = std::thread::scope(|s| {
-        let jobs: Vec<_> = seasons.iter().map(|season| s.spawn(move || api.episodes(title.id, season.number).unwrap_or_default())).collect();
-        jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
+        let jobs: Vec<_> = seasons
+            .iter()
+            .map(|season| {
+                s.spawn(move || api.episodes(title.id, season.number).unwrap_or_default())
+            })
+            .collect();
+        jobs.into_iter()
+            .map(|j| j.join().unwrap_or_default())
+            .collect()
     });
     let mut eps = Vec::new();
     for (season, list) in seasons.iter().zip(lists) {
@@ -294,7 +367,10 @@ fn tv_episodes(api: &Api, title: &Title) -> Result<Vec<Ep>> {
                 row: Row {
                     label: format!("S{:02}E{:02} · {}", season.number, e.number, e.name),
                     title: e.name.clone(),
-                    meta: format!("{} · season {} · episode {}", title.name, season.number, e.number),
+                    meta: format!(
+                        "{} · season {} · episode {}",
+                        title.name, season.number, e.number
+                    ),
                     body: e.overview,
                     poster: e.still.or_else(|| title.poster_path.clone()),
                 },
@@ -313,18 +389,35 @@ fn anime_episodes(api: &Api, title: &Title, dub: bool) -> Result<Vec<Ep>> {
         .into_iter()
         .map(|e| {
             let m = meta.iter().find(|m| m.num == e.number);
-            let name = m.and_then(|m| m.title.clone()).or(e.title.clone()).unwrap_or_default();
-            let num = if e.number.fract() == 0.0 { format!("{}", e.number as i64) } else { e.number.to_string() };
+            let name = m
+                .and_then(|m| m.title.clone())
+                .or(e.title.clone())
+                .unwrap_or_default();
+            let num = if e.number.fract() == 0.0 {
+                format!("{}", e.number as i64)
+            } else {
+                e.number.to_string()
+            };
             Ep {
                 season: 0,
                 number: e.number,
                 name: name.clone(),
                 row: Row {
-                    label: if name.is_empty() { format!("E{num}") } else { format!("E{num} · {name}") },
-                    title: if name.is_empty() { format!("Episode {num}") } else { name },
+                    label: if name.is_empty() {
+                        format!("E{num}")
+                    } else {
+                        format!("E{num} · {name}")
+                    },
+                    title: if name.is_empty() {
+                        format!("Episode {num}")
+                    } else {
+                        name
+                    },
                     meta: format!("{} · episode {num} · {tag}", title.name),
                     body: m.and_then(|m| m.desc.clone()).unwrap_or_default(),
-                    poster: m.and_then(|m| m.still.clone()).or_else(|| title.poster_path.clone()),
+                    poster: m
+                        .and_then(|m| m.still.clone())
+                        .or_else(|| title.poster_path.clone()),
                 },
                 sources: api::episode_sources(&providers, e.number),
             }
@@ -332,10 +425,20 @@ fn anime_episodes(api: &Api, title: &Title, dub: bool) -> Result<Vec<Ep>> {
         .collect())
 }
 
-fn episodes(api: &Api, cfg: &Config, logged_in: bool, title: &Title, resume: Option<(u32, u32, Option<f64>)>) -> Result<()> {
+fn episodes(
+    api: &Api,
+    cfg: &Config,
+    logged_in: bool,
+    title: &Title,
+    resume: Option<(u32, u32, Option<f64>)>,
+) -> Result<()> {
     let anime = title.kind == Kind::Anime;
     let mut dub = cfg.audio.eq_ignore_ascii_case("dub");
-    let mut eps = if anime { anime_episodes(api, title, dub)? } else { tv_episodes(api, title)? };
+    let mut eps = if anime {
+        anime_episodes(api, title, dub)?
+    } else {
+        tv_episodes(api, title)?
+    };
     if anime && eps.is_empty() {
         dub = !dub;
         eps = anime_episodes(api, title, dub)?;
@@ -344,19 +447,36 @@ fn episodes(api: &Api, cfg: &Config, logged_in: bool, title: &Title, resume: Opt
         anyhow::bail!("no episodes found for {}", title.name);
     }
     let mut cursor = resume
-        .and_then(|(s, e, _)| eps.iter().position(|ep| (anime || ep.season == s) && ep.number as u32 == e))
+        .and_then(|(s, e, _)| {
+            eps.iter()
+                .position(|ep| (anime || ep.season == s) && ep.number as u32 == e)
+        })
         .unwrap_or(0);
     let mut start = resume.and_then(|(_, _, at)| at);
     let mut status = None;
     loop {
-        let heading = if anime { format!("{} · {}", title.name, if dub { "dub" } else { "sub" }) } else { title.name.clone() };
-        let mut sc = Screen::new(&heading, if anime { ANIME_HINT } else { TV_HINT }, eps.clone(), ep_row);
+        let heading = if anime {
+            format!("{} · {}", title.name, if dub { "dub" } else { "sub" })
+        } else {
+            title.name.clone()
+        };
+        let mut sc = Screen::new(
+            &heading,
+            if anime { ANIME_HINT } else { TV_HINT },
+            eps.clone(),
+            ep_row,
+        );
         sc.cursor = cursor;
-        sc.keys = if anime { vec!['d', 'D', 'a'] } else { vec!['d', 'D'] };
+        sc.keys = if anime {
+            vec!['d', 'D', 'a']
+        } else {
+            vec!['d', 'D']
+        };
         sc.status = status.take();
         match screen::run(api, &mut sc)? {
             Out::Back => return Ok(()),
-            Out::Pick(i) => match play_from(api, cfg, logged_in, title, &eps, i, dub, start.take()) {
+            Out::Pick(i) => match play_from(api, cfg, logged_in, title, &eps, i, dub, start.take())
+            {
                 Ok(next) => cursor = next,
                 Err(err) => {
                     cursor = i;
@@ -370,8 +490,14 @@ fn episodes(api: &Api, cfg: &Config, logged_in: bool, title: &Title, resume: Opt
             Out::Key('D', i) => {
                 cursor = i;
                 ui::clear();
-                let scope = if anime { vec![Scope::Everything] } else { vec![Scope::Season, Scope::Everything] };
-                let Some(scope) = ui::select("download", scope)? else { continue };
+                let scope = if anime {
+                    vec![Scope::Everything]
+                } else {
+                    vec![Scope::Season, Scope::Everything]
+                };
+                let Some(scope) = ui::select("download", scope)? else {
+                    continue;
+                };
                 let jobs: Vec<Job> = eps
                     .iter()
                     .filter(|e| matches!(scope, Scope::Everything) || e.season == eps[i].season)
@@ -382,7 +508,10 @@ fn episodes(api: &Api, cfg: &Config, logged_in: bool, title: &Title, resume: Opt
             Out::Key('a', i) if anime => {
                 let flipped = anime_episodes(api, title, !dub)?;
                 if flipped.is_empty() {
-                    status = Some(format!("no {} for this one", if dub { "sub" } else { "dub" }));
+                    status = Some(format!(
+                        "no {} for this one",
+                        if dub { "sub" } else { "dub" }
+                    ));
                     cursor = i;
                 } else {
                     dub = !dub;
@@ -404,23 +533,50 @@ fn job(title: &Title, ep: &Ep, dub: bool) -> Job {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn play_from(api: &Api, cfg: &Config, logged_in: bool, title: &Title, eps: &[Ep], mut i: usize, dub: bool, mut start: Option<f64>) -> Result<usize> {
+fn play_from(
+    api: &Api,
+    cfg: &Config,
+    logged_in: bool,
+    title: &Title,
+    eps: &[Ep],
+    mut i: usize,
+    dub: bool,
+    mut start: Option<f64>,
+) -> Result<usize> {
     loop {
         let ep = &eps[i];
         let label = if title.kind == Kind::Anime {
-            format!("{} · {}{}", title.name, ep.row.label, if dub { " (dub)" } else { "" })
+            format!(
+                "{} · {}{}",
+                title.name,
+                ep.row.label,
+                if dub { " (dub)" } else { "" }
+            )
         } else {
             format!("{} · {}", title.name, ep.row.label)
         };
         ui::clear();
         println!("finding sources for {label}");
-        let (kind, season, number, history_title): (&str, u32, u32, &str) = if title.kind == Kind::Anime {
-            ("anime", 0, ep.number as u32, if ep.name.is_empty() { &title.name } else { &ep.name })
-        } else {
-            ("tv", ep.season, ep.number as u32, &title.name)
-        };
+        let (kind, season, number, history_title): (&str, u32, u32, &str) =
+            if title.kind == Kind::Anime {
+                (
+                    "anime",
+                    0,
+                    ep.number as u32,
+                    if ep.name.is_empty() {
+                        &title.name
+                    } else {
+                        &ep.name
+                    },
+                )
+            } else {
+                ("tv", ep.season, ep.number as u32, &title.name)
+            };
         let streams: Vec<Stream> = if title.kind == Kind::Anime {
-            ep.sources.iter().filter_map(|(p, id)| api.anime_stream(p, id, &label)).collect()
+            ep.sources
+                .iter()
+                .filter_map(|(p, id)| api.anime_stream(p, id, &label))
+                .collect()
         } else {
             let path = format!("{}/{}/{}", title.id, ep.season, ep.number as u32);
             with_subs(api, cfg, &path, api.resolve(&path, &label, None, false))
@@ -429,12 +585,24 @@ fn play_from(api: &Api, cfg: &Config, logged_in: bool, title: &Title, eps: &[Ep]
             s.start = start;
             s
         });
-        let watched = play_any(api, cfg, logged_in, kind, title.id, history_title, season, number, streams)?;
+        let watched = play_any(
+            api,
+            cfg,
+            logged_in,
+            kind,
+            title.id,
+            history_title,
+            season,
+            number,
+            streams,
+        )?;
         start = None;
         if !watched.finished() {
             return Ok(i);
         }
-        let Some(next) = eps.get(i + 1) else { return Ok(i) };
+        let Some(next) = eps.get(i + 1) else {
+            return Ok(i);
+        };
         if !screen::countdown(&next.row.label, 6)? {
             return Ok(i + 1);
         }
@@ -442,12 +610,28 @@ fn play_from(api: &Api, cfg: &Config, logged_in: bool, title: &Title, eps: &[Ep]
     }
 }
 
-fn play_movie(api: &Api, cfg: &Config, logged_in: bool, title: &Title, start: Option<f64>) -> Result<player::Watched> {
+fn play_movie(
+    api: &Api,
+    cfg: &Config,
+    logged_in: bool,
+    title: &Title,
+    start: Option<f64>,
+) -> Result<player::Watched> {
     let id = title.id.to_string();
     ui::clear();
     println!("finding sources for {}", title.name);
     let streams = with_subs(api, cfg, &id, api.resolve(&id, &title.name, start, true));
-    play_any(api, cfg, logged_in, "movie", title.id, &title.name, 0, 0, streams.into_iter())
+    play_any(
+        api,
+        cfg,
+        logged_in,
+        "movie",
+        title.id,
+        &title.name,
+        0,
+        0,
+        streams.into_iter(),
+    )
 }
 
 fn with_subs(api: &Api, cfg: &Config, path: &str, mut streams: Vec<Stream>) -> Vec<Stream> {
@@ -520,21 +704,41 @@ fn account(api: &mut Api, cfg: &Config, user: &mut Option<String>) -> Result<()>
     }
 }
 
-fn authenticate(api: &mut Api, cfg: &Config, user: &mut Option<String>, signup: bool) -> Result<()> {
+fn authenticate(
+    api: &mut Api,
+    cfg: &Config,
+    user: &mut Option<String>,
+    signup: bool,
+) -> Result<()> {
     let Some(username) = ui::text("username")? else {
         return Ok(());
     };
-    let password = if signup { ui::new_password("password")? } else { ui::password("password")? };
+    let password = if signup {
+        ui::new_password("password")?
+    } else {
+        ui::password("password")?
+    };
     let Some(password) = password else {
         return Ok(());
     };
-    let attempt = if signup { api.register(username.trim(), &password) } else { api.login(username.trim(), &password) };
+    let attempt = if signup {
+        api.register(username.trim(), &password)
+    } else {
+        api.login(username.trim(), &password)
+    };
     match attempt {
         Ok(token) => {
             config::save_session(&token)?;
             *api = Api::new(&cfg.host, Some(token));
             *user = api.me().unwrap_or(None);
-            println!("{}", if signup { "account created" } else { "signed in" });
+            println!(
+                "{}",
+                if signup {
+                    "account created"
+                } else {
+                    "signed in"
+                }
+            );
         }
         Err(err) => println!("{err}"),
     }
@@ -552,14 +756,34 @@ fn settings(cfg: &mut Config) -> Result<()> {
         println!("anime audio:       {}", cfg.audio);
         println!("parallel downloads: {}", cfg.parallel_downloads);
         println!("max quality:       {}p", cfg.max_height);
-        println!("image cell size:   {}", if cfg.image_cell.is_empty() { "auto" } else { cfg.image_cell.as_str() });
+        println!(
+            "image cell size:   {}",
+            if cfg.image_cell.is_empty() {
+                "auto"
+            } else {
+                cfg.image_cell.as_str()
+            }
+        );
         println!("images:            {}\n", screen::image_info());
-        let options = vec![Setting::Host, Setting::Player, Setting::Downloads, Setting::Subtitle, Setting::Audio, Setting::Parallel, Setting::Quality, Setting::Cell, Setting::Back];
+        let options = vec![
+            Setting::Host,
+            Setting::Player,
+            Setting::Downloads,
+            Setting::Subtitle,
+            Setting::Audio,
+            Setting::Parallel,
+            Setting::Quality,
+            Setting::Cell,
+            Setting::Back,
+        ];
         match ui::select("settings", options)? {
             Some(Setting::Host) => edit_field(&mut cfg.host, "server host (e.g. https://viel.tv)")?,
             Some(Setting::Player) => edit_field(&mut cfg.player, "player command or full path")?,
             Some(Setting::Downloads) => edit_field(&mut cfg.download_dir, "download folder")?,
-            Some(Setting::Subtitle) => edit_field(&mut cfg.subtitle_lang, "subtitle language code (e.g. en, es, ja)")?,
+            Some(Setting::Subtitle) => edit_field(
+                &mut cfg.subtitle_lang,
+                "subtitle language code (e.g. en, es, ja)",
+            )?,
             Some(Setting::Audio) => {
                 if let Some(choice) = ui::select("default anime audio", vec!["sub", "dub"])? {
                     cfg.audio = choice.to_string();
@@ -577,7 +801,9 @@ fn settings(cfg: &mut Config) -> Result<()> {
                 }
             }
             Some(Setting::Cell) => {
-                if let Some(v) = ui::text("cell size in pixels, WIDTHxHEIGHT (e.g. 9x20), empty for auto")? {
+                if let Some(v) =
+                    ui::text("cell size in pixels, WIDTHxHEIGHT (e.g. 9x20), empty for auto")?
+                {
                     cfg.image_cell = v.trim().to_lowercase();
                     println!("takes effect next start");
                     sleep(Duration::from_millis(900));

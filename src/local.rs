@@ -34,7 +34,13 @@ fn resolve_all<F>(names: Vec<String>, job: F) -> Vec<Stream>
 where
     F: Fn(&str) -> Option<Stream> + Send + Sync + 'static,
 {
-    *probes().lock().unwrap() = names.iter().map(|n| Probe { name: n.clone(), state: "checking" }).collect();
+    *probes().lock().unwrap() = names
+        .iter()
+        .map(|n| Probe {
+            name: n.clone(),
+            state: "checking",
+        })
+        .collect();
     let job = std::sync::Arc::new(job);
     let (tx, rx) = mpsc::channel();
     for (index, name) in names.iter().cloned().enumerate() {
@@ -73,7 +79,12 @@ where
     }
     for (index, slot) in slots.iter().enumerate() {
         if slot.is_none() {
-            let state = probes().lock().unwrap().get(index).map(|p| p.state).unwrap_or("none");
+            let state = probes()
+                .lock()
+                .unwrap()
+                .get(index)
+                .map(|p| p.state)
+                .unwrap_or("none");
             if state == "checking" {
                 mark(&names[index], "skipped");
             }
@@ -91,7 +102,11 @@ struct State {
 fn state() -> &'static RwLock<State> {
     static STATE: OnceLock<RwLock<State>> = OnceLock::new();
     STATE.get_or_init(|| {
-        RwLock::new(State { api: Api::new("https://viel.tv", None), host: "https://viel.tv".into(), subtitle_lang: "en".into() })
+        RwLock::new(State {
+            api: Api::new("https://viel.tv", None),
+            host: "https://viel.tv".into(),
+            subtitle_lang: "en".into(),
+        })
     })
 }
 
@@ -99,6 +114,19 @@ pub fn configure(host: &str, token: Option<String>) {
     let mut s = state().write().unwrap();
     s.host = host.trim_end_matches('/').to_string();
     s.api = Api::new(&s.host, token);
+}
+
+pub fn subtitle_proxy(url: &str, referer: Option<&str>) -> Option<String> {
+    let host = state().read().unwrap().host.clone();
+    if host.is_empty() || url.starts_with(&host) {
+        return None;
+    }
+    let mut out = format!("{host}/proxy/subtitle?url={}", urlencoding::encode(url));
+    if let Some(r) = referer.filter(|r| !r.is_empty()) {
+        out.push_str("&ref=");
+        out.push_str(&urlencoding::encode(r));
+    }
+    Some(out)
 }
 
 pub fn set_token(token: Option<String>) {
@@ -129,8 +157,14 @@ fn flush() {
 }
 
 pub fn log(tag: &str, message: impl Into<String>) {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-    pending().lock().unwrap().push(json!({ "t": now, "tag": tag, "msg": message.into() }));
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    pending()
+        .lock()
+        .unwrap()
+        .push(json!({ "t": now, "tag": tag, "msg": message.into() }));
 }
 
 type Reply = (&'static str, &'static str, Vec<u8>);
@@ -138,15 +172,28 @@ type Reply = (&'static str, &'static str, Vec<u8>);
 pub fn handle(method: &str, path: &str, query: &HashMap<String, String>, body: &[u8]) -> Reply {
     match route(method, path, query, body) {
         Ok(Some(v)) => ("200 OK", "application/json", v.to_string().into_bytes()),
-        Ok(None) => ("404 Not Found", "application/json", br#"{"error":"not found"}"#.to_vec()),
+        Ok(None) => (
+            "404 Not Found",
+            "application/json",
+            br#"{"error":"not found"}"#.to_vec(),
+        ),
         Err(e) => {
             log("api", format!("{method} {path}: {e}"));
-            ("500 Internal Server Error", "application/json", json!({ "error": e.to_string() }).to_string().into_bytes())
+            (
+                "500 Internal Server Error",
+                "application/json",
+                json!({ "error": e.to_string() }).to_string().into_bytes(),
+            )
         }
     }
 }
 
-fn route(method: &str, path: &str, query: &HashMap<String, String>, body: &[u8]) -> Result<Option<Value>> {
+fn route(
+    method: &str,
+    path: &str,
+    query: &HashMap<String, String>,
+    body: &[u8],
+) -> Result<Option<Value>> {
     let (api, host, lang) = {
         let s = state().read().unwrap();
         (s.api.clone(), s.host.clone(), s.subtitle_lang.clone())
@@ -157,7 +204,11 @@ fn route(method: &str, path: &str, query: &HashMap<String, String>, body: &[u8])
         ("GET", "search") => search(&api, &host, &q("q")),
         ("GET", "list") if q("path").starts_with("anime") => {
             let page: u32 = q("page").parse().unwrap_or(1);
-            let rows: Vec<TitleOut> = api.anime_trending_page(page)?.into_iter().map(|t| title_out(&host, t)).collect();
+            let rows: Vec<TitleOut> = api
+                .anime_trending_page(page)?
+                .into_iter()
+                .map(|t| title_out(&host, t))
+                .collect();
             json!(rows)
         }
         ("GET", "list") => {
@@ -168,14 +219,27 @@ fn route(method: &str, path: &str, query: &HashMap<String, String>, body: &[u8])
                 path.push_str("page=");
                 path.push_str(&page);
             }
-            let rows: Vec<TitleOut> = api.list(&path)?.into_iter().map(|t| title_out(&host, t)).collect();
+            let rows: Vec<TitleOut> = api
+                .list(&path)?
+                .into_iter()
+                .map(|t| title_out(&host, t))
+                .collect();
             json!(rows)
         }
         ("GET", "details") => {
             let kind = parse_kind(&q("kind"))?;
-            json!(details_out(&host, api.details(kind, q("id").parse().unwrap_or(0))?))
+            json!(details_out(
+                &host,
+                api.details(kind, q("id").parse().unwrap_or(0))?
+            ))
         }
-        ("GET", "title") => title(&api, &host, &q("kind"), q("id").parse().unwrap_or(0), q("dub") == "1")?,
+        ("GET", "title") => title(
+            &api,
+            &host,
+            &q("kind"),
+            q("id").parse().unwrap_or(0),
+            q("dub") == "1",
+        )?,
         ("POST", "play") => play(&api, &lang, serde_json::from_slice(body)?)?,
         ("POST", "progress") => {
             let p: Progress = serde_json::from_slice(body)?;
@@ -192,7 +256,11 @@ fn route(method: &str, path: &str, query: &HashMap<String, String>, body: &[u8])
         }
         ("POST", "login") | ("POST", "register") => {
             let c: Login = serde_json::from_slice(body)?;
-            let token = if path == "login" { api.login(&c.username, &c.password)? } else { api.register(&c.username, &c.password)? };
+            let token = if path == "login" {
+                api.login(&c.username, &c.password)?
+            } else {
+                api.register(&c.username, &c.password)?
+            };
             set_token(Some(token.clone()));
             json!({ "token": token, "username": c.username })
         }
@@ -407,7 +475,10 @@ fn image_url(host: &str, path: Option<&str>, size: &str) -> Option<String> {
     } else if path.starts_with("http") {
         format!("{host}/proxy/image?url={}", urlencoding::encode(path))
     } else {
-        format!("{host}/proxy/image?url={}", urlencoding::encode(&format!("https://image.tmdb.org/t/p/{size}{path}")))
+        format!(
+            "{host}/proxy/image?url={}",
+            urlencoding::encode(&format!("https://image.tmdb.org/t/p/{size}{path}"))
+        )
     })
 }
 
@@ -479,8 +550,16 @@ fn home(api: &Api, host: &str) -> Value {
             f.join().unwrap_or_default(),
         )
     });
-    let hero = today.first().and_then(|t| api.details(t.kind, t.id).ok()).map(|d| details_out(host, d));
-    let out = |list: Vec<Title>, limit: usize| -> Vec<TitleOut> { list.into_iter().take(limit).map(|t| title_out(host, t)).collect() };
+    let hero = today
+        .first()
+        .and_then(|t| api.details(t.kind, t.id).ok())
+        .map(|d| details_out(host, d));
+    let out = |list: Vec<Title>, limit: usize| -> Vec<TitleOut> {
+        list.into_iter()
+            .take(limit)
+            .map(|t| title_out(host, t))
+            .collect()
+    };
     json!({
         "hero": hero,
         "continue": resume.into_iter().map(|r| continue_out(host, r)).collect::<Vec<_>>(),
@@ -502,7 +581,11 @@ fn search(api: &Api, host: &str, query: &str) -> Value {
         let b = s.spawn(|| api.anime_search_merged(query));
         (a.join().unwrap_or_default(), b.join().unwrap_or_default())
     });
-    let mut rows: Vec<TitleOut> = anime.into_iter().take(6).map(|t| title_out(host, t)).collect();
+    let mut rows: Vec<TitleOut> = anime
+        .into_iter()
+        .take(6)
+        .map(|t| title_out(host, t))
+        .collect();
     rows.extend(media.into_iter().take(14).map(|t| title_out(host, t)));
     json!(rows)
 }
@@ -512,8 +595,15 @@ fn title(api: &Api, host: &str, kind: &str, id: u64, dub: bool) -> Result<Value>
         "tv" => {
             let seasons = api.seasons(id)?;
             let lists: Vec<_> = thread::scope(|s| {
-                let jobs: Vec<_> = seasons.iter().map(|season| s.spawn(move || api.episodes(id, season.number).unwrap_or_default())).collect();
-                jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
+                let jobs: Vec<_> = seasons
+                    .iter()
+                    .map(|season| {
+                        s.spawn(move || api.episodes(id, season.number).unwrap_or_default())
+                    })
+                    .collect();
+                jobs.into_iter()
+                    .map(|j| j.join().unwrap_or_default())
+                    .collect()
             });
             let mut eps = Vec::new();
             for (season, list) in seasons.iter().zip(lists) {
@@ -549,7 +639,11 @@ fn anime_episodes(api: &Api, host: &str, id: u64, dub: bool) -> Result<Vec<Episo
         let a = s.spawn(|| api.anime_providers(id, dub));
         let b = s.spawn(|| api.anime_episode_meta(id));
         let c = s.spawn(|| api.details(Kind::Anime, id).ok().and_then(|d| d.runtime));
-        (a.join().unwrap_or_else(|_| Ok(Vec::new())), b.join().unwrap_or_default(), c.join().ok().flatten())
+        (
+            a.join().unwrap_or_else(|_| Ok(Vec::new())),
+            b.join().unwrap_or_default(),
+            c.join().ok().flatten(),
+        )
     });
     let providers = providers?;
     Ok(api::merge_episodes(&providers)
@@ -559,11 +653,17 @@ fn anime_episodes(api: &Api, host: &str, id: u64, dub: bool) -> Result<Vec<Episo
             EpisodeOut {
                 season: 0,
                 number: e.number,
-                name: m.and_then(|m| m.title.clone()).or(e.title.clone()).unwrap_or_default(),
+                name: m
+                    .and_then(|m| m.title.clone())
+                    .or(e.title.clone())
+                    .unwrap_or_default(),
                 overview: m.and_then(|m| m.desc.clone()).unwrap_or_default(),
                 still: poster_url(host, m.and_then(|m| m.still.as_deref())),
                 runtime,
-                sources: api::episode_sources(&providers, e.number).into_iter().map(|(provider, id)| Source { provider, id }).collect(),
+                sources: api::episode_sources(&providers, e.number)
+                    .into_iter()
+                    .map(|(provider, id)| Source { provider, id })
+                    .collect(),
             }
         })
         .collect())
@@ -575,12 +675,23 @@ fn play(api: &Api, lang: &str, p: PlayIn) -> Result<Value> {
     let streams: Vec<Stream> = match p.kind.as_str() {
         "movie" | "tv" => {
             let movie = p.kind == "movie";
-            let path = if movie { p.id.to_string() } else { format!("{}/{}/{}", p.id, p.season, p.episode as u32) };
-            let names: Vec<String> = Api::sources_for(movie).into_iter().map(str::to_string).collect();
+            let path = if movie {
+                p.id.to_string()
+            } else {
+                format!("{}/{}/{}", p.id, p.season, p.episode as u32)
+            };
+            let names: Vec<String> = Api::sources_for(movie)
+                .into_iter()
+                .map(str::to_string)
+                .collect();
             let client = api.clone();
             let title = p.title.clone();
             let target = path.clone();
-            let found = resolve_all(names, move |src| client.extract(src, &target, &title, None).filter(api::playable));
+            let found = resolve_all(names, move |src| {
+                client
+                    .extract(src, &target, &title, None)
+                    .filter(api::playable)
+            });
             with_subs(api, lang, &path, found)
         }
         "anime" => {
@@ -595,15 +706,30 @@ fn play(api: &Api, lang: &str, p: PlayIn) -> Result<Value> {
                 p.sources
             };
             let names: Vec<String> = sources.iter().map(|s| s.provider.clone()).collect();
-            let ids: HashMap<String, String> = sources.into_iter().map(|s| (s.provider, s.id)).collect();
+            let ids: HashMap<String, String> =
+                sources.into_iter().map(|s| (s.provider, s.id)).collect();
             let client = api.clone();
             let title = p.title.clone();
-            resolve_all(names, move |provider| ids.get(provider).and_then(|id| client.anime_stream(provider, id, &title)))
+            resolve_all(names, move |provider| {
+                ids.get(provider)
+                    .and_then(|id| client.anime_stream(provider, id, &title))
+            })
         }
         other => bail!("unknown kind {other}"),
     };
     let names: Vec<&str> = streams.iter().map(|s| s.source.as_str()).collect();
-    log("resolve", format!("{} {} s{} e{} → [{}] in {:.1}s", p.kind, p.id, p.season, p.episode, names.join(", "), started.elapsed().as_secs_f32()));
+    log(
+        "resolve",
+        format!(
+            "{} {} s{} e{} → [{}] in {:.1}s",
+            p.kind,
+            p.id,
+            p.season,
+            p.episode,
+            names.join(", "),
+            started.elapsed().as_secs_f32()
+        ),
+    );
     let out: Vec<StreamOut> = streams.into_iter().map(|s| stream_out(s, lang)).collect();
     Ok(json!({ "streams": out }))
 }
@@ -618,14 +744,25 @@ fn with_subs(api: &Api, lang: &str, path: &str, mut streams: Vec<Stream>) -> Vec
 
 fn stream_out(s: Stream, lang: &str) -> StreamOut {
     let referer = s.referer.as_deref();
-    let url = if s.hls { relay::playlist(&s.url, referer) } else { relay::video(&s.url, referer) };
+    let url = if s.hls {
+        relay::playlist(&s.url, referer)
+    } else {
+        relay::video(&s.url, referer)
+    };
     let mut subs = s.subs.clone();
     subs.sort_by_key(|x| !api::lang_matches(&x.lang, lang));
     StreamOut {
         source: s.source.clone(),
         url,
         hls: s.hls,
-        subs: subs.into_iter().take(8).map(|x| SubOut { lang: x.lang, url: relay::subtitle(&x.url, x.referer.as_deref()) }).collect(),
+        subs: subs
+            .into_iter()
+            .take(8)
+            .map(|x| SubOut {
+                lang: x.lang,
+                url: relay::subtitle(&x.url, x.referer.as_deref()),
+            })
+            .collect(),
         intro: s.intro,
     }
 }

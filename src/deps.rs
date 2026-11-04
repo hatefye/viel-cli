@@ -2,7 +2,6 @@ use crate::ui;
 
 use std::process::{Command, Stdio};
 
-
 pub fn install_tool(tool: &str) -> bool {
     let Some(plan) = plan(tool) else {
         println!("no supported package manager was found. install {tool} manually.");
@@ -25,7 +24,11 @@ pub fn install_tool(tool: &str) -> bool {
         println!("\ninstall did not complete.");
         return false;
     }
-    let found = if tool == "ffmpeg" { resolve_ffmpeg() } else { resolve_player(tool) };
+    let found = if tool == "ffmpeg" {
+        resolve_ffmpeg()
+    } else {
+        resolve_player(tool)
+    };
     match found {
         Some(_) => println!("\n{tool} installed."),
         None => println!("\n{tool} installed, but it is not on PATH yet. restart your terminal and run viel again."),
@@ -128,14 +131,27 @@ fn plan(tool: &str) -> Option<Plan> {
 #[cfg(not(target_os = "windows"))]
 fn build(program: &str, args: &[&str], sudo: bool, pretty: Option<&str>) -> Plan {
     let pretty = pretty.map(str::to_string).unwrap_or_else(|| {
-        format!("{}{} {}", if sudo { "sudo " } else { "" }, program, args.join(" "))
+        format!(
+            "{}{} {}",
+            if sudo { "sudo " } else { "" },
+            program,
+            args.join(" ")
+        )
     });
     if sudo {
         let mut full = vec![program.to_string()];
         full.extend(args.iter().map(|a| a.to_string()));
-        Plan { program: "sudo".into(), args: full, pretty }
+        Plan {
+            program: "sudo".into(),
+            args: full,
+            pretty,
+        }
     } else {
-        Plan { program: program.into(), args: args.iter().map(|a| a.to_string()).collect(), pretty }
+        Plan {
+            program: program.into(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+            pretty,
+        }
     }
 }
 
@@ -190,12 +206,21 @@ pub fn resolve_player(player: &str) -> Option<String> {
             roots.push((PathBuf::from(pfx), true));
         }
         if let Ok(local) = std::env::var("LOCALAPPDATA") {
-            roots.push((PathBuf::from(&local).join("Microsoft\\WinGet\\Packages"), true));
-            roots.push((PathBuf::from(&local).join("Microsoft\\WinGet\\Links"), false));
+            roots.push((
+                PathBuf::from(&local).join("Microsoft\\WinGet\\Packages"),
+                true,
+            ));
+            roots.push((
+                PathBuf::from(&local).join("Microsoft\\WinGet\\Links"),
+                false,
+            ));
             roots.push((PathBuf::from(&local).join("Programs"), true));
         }
         if let Ok(home) = std::env::var("USERPROFILE") {
-            roots.push((PathBuf::from(&home).join("scoop\\apps\\mpv\\current"), false));
+            roots.push((
+                PathBuf::from(&home).join("scoop\\apps\\mpv\\current"),
+                false,
+            ));
             roots.push((PathBuf::from(&home).join("scoop\\shims"), false));
         }
         roots.push((PathBuf::from("C:\\ProgramData\\chocolatey\\bin"), false));
@@ -223,7 +248,10 @@ fn search_root(root: &std::path::Path, filter_mpv: bool) -> Option<String> {
             continue;
         }
         if filter_mpv {
-            let name = dir.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let name = dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
             if !name.contains("mpv") {
                 continue;
             }
@@ -258,7 +286,11 @@ fn find_exe(dir: &std::path::Path, depth: u8) -> Option<String> {
 }
 
 fn has(bin: &str) -> bool {
-    let flag = if bin.ends_with("ffmpeg") || bin.ends_with("ffmpeg.exe") { "-version" } else { "--version" };
+    let flag = if bin.ends_with("ffmpeg") || bin.ends_with("ffmpeg.exe") {
+        "-version"
+    } else {
+        "--version"
+    };
     Command::new(bin)
         .arg(flag)
         .stdout(Stdio::null())
