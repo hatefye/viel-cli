@@ -26,39 +26,39 @@ struct PlayerView: View {
     }
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            PlayerSurface(model: model).ignoresSafeArea()
-            gestures
-            if controls {
-                shade
-                pauseMeta
-                controlLayer
-            }
-            subtitleLayer
-            if model.status != nil { statusLayer }
-            skipLayer
-            nextLayer
-            if let flash {
-                Text(flash)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(Color.black.opacity(0.5), in: Capsule())
-                    .transition(.opacity)
+        GeometryReader { geometry in
+            let landscape = geometry.size.width > geometry.size.height
+            ZStack {
+                Color.black.ignoresSafeArea()
+                PlayerSurface(model: model).ignoresSafeArea()
+                gestures
+                if controls {
+                    shade
+                    pauseMeta(landscape)
+                    controlLayer(landscape)
+                }
+                subtitleLayer(landscape)
+                if model.status != nil { statusLayer }
+                skipLayer(landscape)
+                nextLayer
+                flashLayer
             }
         }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
-        .animation(.easeInOut(duration: 0.22), value: controls)
-        .animation(.easeInOut(duration: 0.2), value: flash)
+        .animation(.smooth(duration: 0.25), value: controls)
+        .animation(.smooth(duration: 0.2), value: flash)
+        .animation(.smooth(duration: 0.25), value: model.isPlaying)
         .task { await start(current) }
-        .onDisappear { model.stop() }
-        .onChange(of: model.isPlaying) { playing in
+        .onAppear { Orientation.request(.landscape) }
+        .onDisappear {
+            model.stop()
+            Orientation.request(.portrait)
+        }
+        .onChange(of: model.isPlaying) { _, playing in
             if playing { scheduleHide() } else { show() }
         }
-        .onChange(of: model.finished) { done in
+        .onChange(of: model.finished) { _, done in
             guard done else { return }
             if core.settings.autoplay, let next = current.next {
                 nextUp = next
@@ -118,6 +118,7 @@ struct PlayerView: View {
     }
 
     private func skip(_ seconds: Double) {
+        Haptic.tap()
         model.skip(seconds)
         flash = seconds < 0 ? "−10s" : "+10s"
         poke()
@@ -141,130 +142,176 @@ struct PlayerView: View {
 
     private var shade: some View {
         VStack(spacing: 0) {
-            LinearGradient(colors: [.black.opacity(0.75), .clear], startPoint: .top, endPoint: .bottom).frame(height: 150)
+            LinearGradient(colors: [.black.opacity(0.6), .clear], startPoint: .top, endPoint: .bottom).frame(height: 120)
             Spacer()
-            LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .top, endPoint: .bottom).frame(height: 240)
+            LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom).frame(height: 200)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
     }
 
-    private var controlLayer: some View {
+    private func controlLayer(_ landscape: Bool) -> some View {
         VStack(spacing: 0) {
-            topBar
+            topBar(landscape)
             Spacer()
             if model.status == nil { centerButtons }
             Spacer()
-            bottomBar
+            if landscape { landscapeDock } else { portraitDock }
         }
     }
 
-    private var topBar: some View {
-        HStack(spacing: 14) {
-            Button { dismiss() } label: {
-                Image(systemName: "arrow.left").font(.system(size: 24, weight: .semibold))
+    private func topBar(_ landscape: Bool) -> some View {
+        HStack(spacing: 12) {
+            Button {
+                Haptic.tap()
+                dismiss()
+            } label: {
+                RoundIcon(icon: "chevron.left", size: 40, weight: .semibold)
             }
-            Text(current.title.name)
-                .font(.system(size: 21, weight: .bold))
-                .lineLimit(1)
-            if let tag = current.episodeTag {
-                Text(tag).font(.system(size: 18, weight: .semibold)).foregroundStyle(Theme.muted).lineLimit(1).layoutPriority(1)
-                if let name = current.episode?.name, !name.isEmpty {
-                    Text(name).font(.system(size: 18)).foregroundStyle(Theme.muted).lineLimit(1)
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(current.title.name)
+                    .font(.system(size: 17, weight: .bold))
+                    .lineLimit(1)
+                if let tag = current.episodeTag {
+                    Text([tag, current.episode?.name ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.muted)
+                        .lineLimit(1)
                 }
             }
+            .shadow(color: .black.opacity(0.6), radius: 4)
             Spacer()
         }
         .foregroundStyle(.white)
-        .padding(.horizontal, 20)
-        .padding(.top, 16)
+        .padding(.horizontal, landscape ? 10 : 12)
+        .padding(.top, landscape ? 8 : 10)
     }
 
     private var centerButtons: some View {
-        HStack(spacing: 64) {
-            Button { skip(-10) } label: {
-                Image(systemName: "gobackward.10").font(.system(size: 36, weight: .medium))
-            }
-            Button { model.togglePlay(); poke() } label: {
-                ZStack {
-                    Circle().fill(Color.white.opacity(0.16)).frame(width: 96, height: 96)
-                    Image(systemName: model.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 40, weight: .bold))
+        GlassEffectContainer(spacing: 28) {
+            HStack(spacing: 28) {
+                Button { skip(-10) } label: { RoundIcon(icon: "gobackward.10", size: 54, weight: .regular) }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                Button {
+                    Haptic.tap()
+                    model.togglePlay()
+                    poke()
+                } label: {
+                    Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 30, weight: .semibold))
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: 74, height: 74)
                 }
-            }
-            Button { skip(10) } label: {
-                Image(systemName: "goforward.10").font(.system(size: 36, weight: .medium))
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                Button { skip(10) } label: { RoundIcon(icon: "goforward.10", size: 54, weight: .regular) }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
             }
         }
         .foregroundStyle(.white)
     }
 
-    private var bottomBar: some View {
-        VStack(spacing: 14) {
-            HStack(spacing: 14) {
-                Text(Format.clock(model.position))
-                    .font(.system(size: 21, weight: .regular, design: .rounded))
-                    .monospacedDigit()
-                Scrubber(position: model.position, duration: model.duration) { target in
-                    model.seek(to: target)
-                    poke()
-                } scrubbing: { active in
-                    scrubbing = active
-                    if active { show() } else { scheduleHide() }
-                }
-                Text(Format.clock(model.duration))
-                    .font(.system(size: 15, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.muted)
+    private var timeline: some View {
+        HStack(spacing: 10) {
+            Text(Format.clock(model.position))
+                .font(.system(size: 14, weight: .medium))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+            Scrubber(position: model.position, duration: model.duration) { target in
+                model.seek(to: target)
+                poke()
+            } scrubbing: { active in
+                scrubbing = active
+                if active { show() } else { scheduleHide() }
             }
-            .padding(.horizontal, 20)
-            HStack {
-                if !current.isMovie {
-                    toolButton("play.square.stack", "Episodes") { sheet = .episodes }
-                    Spacer()
-                }
-                if current.next != nil {
-                    toolButton("forward.end.fill", "Next") { Task { await start(current.next!) } }
-                    Spacer()
-                }
-                toolButton("captions.bubble.fill", "Subtitles") { sheet = .subtitles }
-                Spacer()
-                toolButton("gearshape.fill", "Settings") { sheet = .settings }
-                Spacer()
-                toolButton("pip.enter", "Picture in Picture") { model.togglePip() }
-            }
-            .padding(.horizontal, 28)
+            Text(Format.clock(model.duration))
+                .font(.system(size: 13))
+                .monospacedDigit()
+                .foregroundStyle(Theme.muted)
         }
+    }
+
+    private var tools: some View {
+        HStack(spacing: 2) {
+            if !current.isMovie {
+                toolButton("play.square.stack", "Episodes") { sheet = .episodes }
+            }
+            if let next = current.next {
+                toolButton("forward.end.fill", "Next episode") { Task { await start(next) } }
+            }
+            toolButton("captions.bubble.fill", "Subtitles") { sheet = .subtitles }
+            toolButton("gearshape.fill", "Settings") { sheet = .settings }
+            toolButton("pip.enter", "Picture in Picture") { model.togglePip() }
+        }
+    }
+
+    private var portraitDock: some View {
+        VStack(spacing: 2) {
+            timeline
+            HStack {
+                tools
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .foregroundStyle(.white)
-        .padding(.bottom, 14)
+        .glassEffect(.regular, in: .rect(cornerRadius: 24))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
+    }
+
+    private var landscapeDock: some View {
+        HStack(spacing: 14) {
+            timeline
+            tools
+        }
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
+        .padding(.vertical, 6)
+        .foregroundStyle(.white)
+        .glassEffect(.regular, in: .capsule)
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
     }
 
     private func toolButton(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon).font(.system(size: 25, weight: .medium)).frame(width: 44, height: 44)
+        Button {
+            Haptic.select()
+            action()
+        } label: {
+            Image(systemName: icon).font(.system(size: 19, weight: .medium)).frame(width: 40, height: 40)
         }
+        .buttonStyle(.plain)
         .accessibilityLabel(label)
     }
 
     @ViewBuilder
-    private var pauseMeta: some View {
+    private func pauseMeta(_ landscape: Bool) -> some View {
         if !model.isPlaying, model.status == nil {
-            VStack(alignment: .leading, spacing: 10) {
-                Logo(url: model.details?.logo, name: current.title.name, maxWidth: 240, size: 30)
-                Text(metaLine).font(.system(size: 17)).foregroundStyle(Theme.muted)
+            VStack(alignment: .leading, spacing: 6) {
+                Logo(url: model.details?.logo, name: current.title.name, maxWidth: landscape ? 200 : 220, size: 26)
+                    .padding(.bottom, 6)
+                Text(metaLine).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.muted)
                 if let episode = current.episode {
-                    Text(episode.displayName).font(.system(size: 26, weight: .bold)).lineLimit(2)
+                    Text(episode.displayName).font(.system(size: 16, weight: .bold)).lineLimit(2)
                 }
                 if let overview = current.episode.map(\.overview).flatMap({ $0.isEmpty ? nil : $0 }) ?? model.details?.overview {
-                    Text(overview).font(.system(size: 16)).foregroundStyle(Theme.soft).lineLimit(4)
+                    Text(overview).font(.system(size: 13.5)).lineSpacing(3).foregroundStyle(Theme.soft).lineLimit(landscape ? 3 : 4)
                 }
             }
             .foregroundStyle(.white)
-            .frame(maxWidth: 440, alignment: .leading)
-            .padding(.horizontal, 24)
+            .frame(maxWidth: landscape ? 360 : 400, alignment: .leading)
+            .padding(.horizontal, landscape ? 24 : 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .padding(.top, 70)
-            .padding(.bottom, 150)
+            .padding(.top, landscape ? 56 : 60)
+            .padding(.bottom, landscape ? 80 : 130)
             .allowsHitTesting(false)
+            .transition(.opacity)
         }
     }
 
@@ -281,65 +328,76 @@ struct PlayerView: View {
         return parts.joined(separator: " · ")
     }
 
-    private var subtitleLayer: some View {
+    private func subtitleLayer(_ landscape: Bool) -> some View {
         VStack {
             Spacer()
             if let cue = model.cue, model.subsEnabled {
                 Text(cue)
-                    .font(.system(size: 21, weight: .medium))
+                    .font(.system(size: landscape ? 19 : 18, weight: .medium))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                     .padding(.horizontal, 24)
-                    .padding(.bottom, controls ? 150 : 36)
+                    .padding(.bottom, controls ? (landscape ? 76 : 120) : 28)
             }
         }
         .allowsHitTesting(false)
     }
 
     private var statusLayer: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 12) {
             if !model.failed {
-                ZStack {
-                    Circle().fill(Color.black.opacity(0.55)).frame(width: 72, height: 72)
-                    ProgressView().tint(.white).scaleEffect(1.4)
-                }
+                ProgressView().tint(.white).scaleEffect(1.3).padding(.top, 4)
             }
             Text(model.status ?? "")
-                .font(.system(size: 15))
-                .foregroundStyle(Theme.soft)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
             if let activity = model.activity, !model.failed {
-                Text(activity).font(.system(size: 13)).foregroundStyle(Theme.muted)
+                Text(activity).font(.system(size: 12)).foregroundStyle(Theme.muted)
             }
             if model.failed {
-                Button("Try again") { Task { await start(current) } }.buttonStyle(WhitePill())
+                Button("Try again") { Task { await start(current) } }
+                    .buttonStyle(.glassProminent)
+                    .tint(.white)
+                    .foregroundStyle(.black)
             }
         }
+        .padding(.horizontal, 22)
+        .padding(.vertical, 18)
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
         .padding(.horizontal, 30)
         .allowsHitTesting(model.failed)
     }
 
-    private var skipLayer: some View {
+    private func skipLayer(_ landscape: Bool) -> some View {
         VStack {
             Spacer()
             HStack {
                 Spacer()
                 if model.showSkip {
-                    Button { model.skipIntro() } label: {
-                        HStack(spacing: 8) {
-                            Text("Skip Intro")
-                            Image(systemName: "play.fill").font(.system(size: 13))
+                    Button {
+                        Haptic.tap()
+                        model.skipIntro()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("Skip Intro").font(.system(size: 13, weight: .semibold))
+                            Image(systemName: "play.fill").font(.system(size: 10))
                         }
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 4)
                     }
-                    .buttonStyle(WhitePill())
-                    .padding(.trailing, 20)
-                    .padding(.bottom, controls ? 150 : 40)
+                    .buttonStyle(.glassProminent)
+                    .tint(.white)
+                    .padding(.trailing, 12)
+                    .padding(.bottom, controls ? (landscape ? 70 : 118) : 28)
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
                 }
             }
         }
+        .animation(.smooth(duration: 0.25), value: model.showSkip)
     }
 
     private var nextLayer: some View {
@@ -348,28 +406,42 @@ struct PlayerView: View {
             if let next = nextUp {
                 HStack(spacing: 14) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Up next in \(countdown)s").font(.system(size: 13)).foregroundStyle(Theme.muted)
-                        Text(next.episode?.label(anime: next.isAnime) ?? "").font(.system(size: 16, weight: .semibold)).lineLimit(1)
+                        Text("Up next in \(countdown)s").font(.system(size: 12)).foregroundStyle(Theme.muted)
+                        Text(next.episode?.label(anime: next.isAnime) ?? "").font(.system(size: 15, weight: .semibold)).lineLimit(1)
                     }
                     Button("Play now") {
                         nextUp = nil
                         countdown = 0
                         Task { await start(next) }
                     }
-                    .buttonStyle(WhitePill())
+                    .buttonStyle(.glassProminent)
+                    .tint(.white)
+                    .foregroundStyle(.black)
                     Button("Cancel") {
                         nextUp = nil
                         countdown = 0
                         dismiss()
                     }
-                    .buttonStyle(GlassPill())
+                    .buttonStyle(.glass)
                 }
                 .foregroundStyle(.white)
                 .padding(14)
-                .background(Theme.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.borderStrong, lineWidth: 1))
-                .padding(.bottom, 40)
+                .glassEffect(.regular, in: .rect(cornerRadius: 20))
+                .padding(.bottom, 30)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var flashLayer: some View {
+        if let flash {
+            Text(flash)
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .glassEffect(.regular, in: .capsule)
+                .transition(.scale(scale: 0.9).combined(with: .opacity))
         }
     }
 
@@ -403,9 +475,9 @@ struct Scrubber: View {
             let width = geometry.size.width
             let fraction = dragging ? dragFraction : (duration > 0 ? min(max(position / duration, 0), 1) : 0)
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.28)).frame(height: 4)
-                Capsule().fill(Theme.accent).frame(width: max(width * fraction, 0), height: 4)
-                Circle().fill(.white).frame(width: 14, height: 14).offset(x: max(width * fraction - 7, -7))
+                Capsule().fill(Color.white.opacity(0.28)).frame(height: 3)
+                Capsule().fill(Theme.accent).frame(width: max(width * fraction, 0), height: 3)
+                Circle().fill(.white).frame(width: 13, height: 13).offset(x: max(width * fraction - 6.5, -6.5))
             }
             .frame(height: 30)
             .contentShape(Rectangle())

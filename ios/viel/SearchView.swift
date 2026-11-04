@@ -16,19 +16,21 @@ struct SearchView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Theme.bg.opacity(0.94).ignoresSafeArea()
+            Theme.bg.opacity(0.9).ignoresSafeArea()
                 .onTapGesture { dismiss() }
             VStack(spacing: 14) {
                 HStack {
                     Spacer()
-                    Button { dismiss() } label: { Image(systemName: "xmark") }
-                        .buttonStyle(GlassCircle(size: 40))
+                    Button { dismiss() } label: { RoundIcon(icon: "xmark", size: 40) }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
                 }
                 .padding(.horizontal, 16)
                 panel
             }
             .padding(.top, 8)
         }
+        .presentationBackground(.clear)
         .task {
             focused = true
             trending = (try? await core.get("list", ["path": "trending/all/day"])) ?? []
@@ -58,7 +60,7 @@ struct SearchView: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
-            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.borderStrong, lineWidth: 1))
 
             ScrollView(showsIndicators: false) {
@@ -106,8 +108,7 @@ struct SearchView: View {
             }
         }
         .padding(16)
-        .background(Theme.surface.opacity(0.92), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(Theme.border, lineWidth: 1))
+        .glassEffect(.regular, in: .rect(cornerRadius: 26))
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
     }

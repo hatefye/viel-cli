@@ -69,8 +69,8 @@ struct AccountView: View {
                     Button("Done") { dismiss() }.foregroundStyle(.white)
                 }
             }
-            .onChange(of: core.settings.maxHeight) { _ in Task { await core.pushSettings() } }
-            .onChange(of: core.settings.subtitleLang) { _ in Task { await core.pushSettings() } }
+            .onChange(of: core.settings.maxHeight) { _, _ in Task { await core.pushSettings() } }
+            .onChange(of: core.settings.subtitleLang) { _, _ in Task { await core.pushSettings() } }
         }
     }
 

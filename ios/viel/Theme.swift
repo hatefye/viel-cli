@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum Theme {
     static let bg = Color(hex: 0x0b0c10)
@@ -9,7 +10,6 @@ enum Theme {
     static let faint = Color.white.opacity(0.34)
     static let border = Color.white.opacity(0.08)
     static let borderStrong = Color.white.opacity(0.16)
-    static let glass = Color(hex: 0x16171c).opacity(0.62)
     static let accent = Color(hex: 0xdc2626)
     static let accentHi = Color(hex: 0xf87171)
     static let match = Color(hex: 0x22c55e)
@@ -26,42 +26,34 @@ extension Color {
     }
 }
 
-struct WhitePill: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(.black)
-            .padding(.horizontal, 26)
-            .padding(.vertical, 13)
-            .background(Color.white, in: Capsule())
-            .opacity(configuration.isPressed ? 0.75 : 1)
+enum Haptic {
+    static func tap() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    static func select() {
+        UISelectionFeedbackGenerator().selectionChanged()
     }
 }
 
-struct GlassPill: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 13)
-            .background(Theme.glass, in: Capsule())
-            .overlay(Capsule().stroke(Theme.borderStrong, lineWidth: 1))
-            .opacity(configuration.isPressed ? 0.75 : 1)
+enum Orientation {
+    static func request(_ mask: UIInterfaceOrientationMask) {
+        AppDelegate.orientation = mask == .portrait ? .allButUpsideDown : mask
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        scene.requestGeometryUpdate(.iPhone(interfaceOrientations: mask))
+        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
     }
 }
 
-struct GlassCircle: ButtonStyle {
-    var size: CGFloat = 44
+struct RoundIcon: View {
+    let icon: String
+    var size: CGFloat = 42
+    var weight: Font.Weight = .medium
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: size * 0.42, weight: .medium))
-            .foregroundStyle(.white)
+    var body: some View {
+        Image(systemName: icon)
+            .font(.system(size: size * 0.42, weight: weight))
             .frame(width: size, height: size)
-            .background(Theme.glass, in: Circle())
-            .overlay(Circle().stroke(Theme.borderStrong, lineWidth: 1))
-            .opacity(configuration.isPressed ? 0.75 : 1)
     }
 }
 
@@ -78,7 +70,7 @@ struct Chip: View {
             .foregroundStyle(Theme.soft)
             .padding(.horizontal, 11)
             .padding(.vertical, 6)
-            .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).stroke(Theme.borderStrong, lineWidth: 1))
+            .glassEffect(.regular, in: .rect(cornerRadius: 9))
     }
 }
 

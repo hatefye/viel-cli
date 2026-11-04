@@ -8,7 +8,7 @@ on:
 
 jobs:
   ipa:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
@@ -21,11 +21,11 @@ jobs:
       - name: Build core
         run: cargo build -p viel-mobile --release --target aarch64-apple-ios
         env:
-          IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+          IPHONEOS_DEPLOYMENT_TARGET: "26.0"
 
       - name: Select Xcode
         run: |
-          latest=$(ls -d /Applications/Xcode_16*.app 2>/dev/null | sort -V | tail -1)
+          latest=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
           if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
           xcodebuild -version
 

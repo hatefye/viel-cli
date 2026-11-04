@@ -3,15 +3,15 @@ options:
   xcodeVersion: "15.4"
   bundleIdPrefix: tv.viel
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.1.1"
+    MARKETING_VERSION: "0.2.0"
     CURRENT_PROJECT_VERSION: "1"
-    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
 targets:
   viel:
     type: application

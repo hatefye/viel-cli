@@ -53,8 +53,9 @@ struct DetailsView: View {
                 .padding(.bottom, 40)
             }
             .ignoresSafeArea(edges: .top)
-            Button { dismiss() } label: { Image(systemName: "xmark") }
-                .buttonStyle(GlassCircle(size: 44))
+            Button { dismiss() } label: { RoundIcon(icon: "xmark", size: 42) }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
                 .padding(.trailing, 16)
                 .padding(.top, 8)
         }
@@ -63,8 +64,8 @@ struct DetailsView: View {
             await loadDetails()
             if !isMovie { await loadEpisodes() }
         }
-        .onChange(of: seasonId) { _ in Task { await loadEpisodes() } }
-        .onChange(of: dub) { value in
+        .onChange(of: seasonId) { _, _ in Task { await loadEpisodes() } }
+        .onChange(of: dub) { _, value in
             if let list, list.dub != value { Task { await loadEpisodes() } }
         }
         .fullScreenCover(item: $playing) { PlayerView(item: $0).environmentObject(core) }
@@ -105,11 +106,17 @@ struct DetailsView: View {
             }
             HStack(spacing: 14) {
                 Button {
+                    Haptic.tap()
                     play(resuming: true)
                 } label: {
                     Label(resume?.resumeAt != nil ? "Resume" : "Play", systemImage: "play.fill")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 5)
                 }
-                .buttonStyle(WhitePill())
+                .buttonStyle(.glassProminent)
+                .tint(.white)
                 if let resume, resume.resumeAt != nil {
                     Text(resume.label).font(.system(size: 14)).foregroundStyle(Theme.muted)
                 }
@@ -158,15 +165,15 @@ struct DetailsView: View {
                 }
                 if isAnime {
                     Button {
+                        Haptic.select()
                         dub.toggle()
                     } label: {
                         Text(dub ? "DUB" : "SUB")
                             .font(.system(size: 13, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(dub ? Theme.accent : Color.white.opacity(0.12), in: Capsule())
+                            .padding(.horizontal, 6)
                     }
+                    .buttonStyle(.glass)
+                    .tint(dub ? Theme.accent : .white)
                 }
             }
             .padding(.horizontal, 16)
@@ -185,7 +192,7 @@ struct DetailsView: View {
             } else if let error {
                 VStack(alignment: .leading, spacing: 10) {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(Theme.muted)
-                    Button("Try again") { Task { await loadEpisodes() } }.buttonStyle(GlassPill())
+                    Button("Try again") { Task { await loadEpisodes() } }.buttonStyle(.glass)
                 }
                 .padding(.horizontal, 16)
             } else {
@@ -202,7 +209,7 @@ struct DetailsView: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(Color.white.opacity(0.08), in: Capsule())
+        .glassEffect(.regular.interactive(), in: .capsule)
     }
 
     private func play(resuming: Bool) {

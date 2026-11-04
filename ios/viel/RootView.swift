@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var core: Core
+    @Namespace private var zoom
     @State private var home: HomeData?
     @State private var error: String?
     @State private var selected: Title?
@@ -38,8 +39,16 @@ struct RootView: View {
             .navigationDestination(for: ListPage.self) { ListView(page: $0) }
         }
         .task { await load() }
-        .fullScreenCover(item: $selected) { DetailsView(title: $0, resume: nil).environmentObject(core) }
-        .fullScreenCover(item: $resume) { DetailsView(title: $0.title, resume: $0).environmentObject(core) }
+        .fullScreenCover(item: $selected) { title in
+            DetailsView(title: title, resume: nil)
+                .navigationTransition(.zoom(sourceID: title.key, in: zoom))
+                .environmentObject(core)
+        }
+        .fullScreenCover(item: $resume) { row in
+            DetailsView(title: row.title, resume: row)
+                .navigationTransition(.zoom(sourceID: row.key, in: zoom))
+                .environmentObject(core)
+        }
         .fullScreenCover(item: $playing) { PlayerView(item: $0).environmentObject(core) }
         .fullScreenCover(isPresented: $showSearch) { SearchView().environmentObject(core) }
         .sheet(isPresented: $showAccount, onDismiss: { Task { await load() } }) {
@@ -48,15 +57,22 @@ struct RootView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: 10) {
             Text("Viel")
                 .font(.system(size: 30, weight: .heavy))
                 .foregroundStyle(.white)
+                .shadow(color: .black.opacity(0.5), radius: 6, y: 2)
             Spacer()
-            Button { showSearch = true } label: { Image(systemName: "magnifyingglass") }
-                .buttonStyle(GlassCircle(size: 42))
-            Button { showAccount = true } label: { Image(systemName: core.username == nil ? "person" : "person.fill") }
-                .buttonStyle(GlassCircle(size: 42))
+            GlassEffectContainer(spacing: 10) {
+                HStack(spacing: 10) {
+                    Button { showSearch = true } label: { RoundIcon(icon: "magnifyingglass") }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
+                    Button { showAccount = true } label: { RoundIcon(icon: core.username == nil ? "person" : "person.fill") }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
+                }
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
@@ -65,7 +81,12 @@ struct RootView: View {
     private var hero: some View {
         let detail = home?.hero
         return ZStack(alignment: .bottom) {
-            Backdrop(url: detail?.poster ?? detail?.backdrop, height: 620)
+            GeometryReader { geometry in
+                let offset = geometry.frame(in: .global).minY
+                let stretch = max(offset, 0)
+                Backdrop(url: detail?.poster ?? detail?.backdrop, height: 620 + stretch)
+                    .offset(y: -stretch)
+            }
             LinearGradient(
                 stops: [
                     .init(color: Theme.bg.opacity(0.55), location: 0),
@@ -104,19 +125,30 @@ struct RootView: View {
                             .lineLimit(2)
                             .padding(.horizontal, 22)
                     }
-                    HStack(spacing: 12) {
-                        Button {
-                            open(detail.title, play: true)
-                        } label: {
-                            Label("Play", systemImage: "play.fill")
+                    GlassEffectContainer(spacing: 12) {
+                        HStack(spacing: 12) {
+                            Button {
+                                Haptic.tap()
+                                open(detail.title, play: true)
+                            } label: {
+                                Label("Play", systemImage: "play.fill")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .foregroundStyle(.black)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.glassProminent)
+                            .tint(.white)
+                            Button {
+                                selected = detail.title
+                            } label: {
+                                Label("More Info", systemImage: "info.circle")
+                                    .font(.system(size: 17, weight: .semibold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 4)
+                            }
+                            .buttonStyle(.glass)
                         }
-                        .buttonStyle(WhitePill())
-                        Button {
-                            selected = detail.title
-                        } label: {
-                            Label("More Info", systemImage: "info.circle")
-                        }
-                        .buttonStyle(GlassPill())
                     }
                     .padding(.top, 6)
                 }
@@ -132,34 +164,46 @@ struct RootView: View {
         if !home.resume.isEmpty {
             Row(title: "Continue watching") {
                 ForEach(home.resume, id: \.key) { row in
-                    ResumeCard(row: row).onTapGesture { resume = row }
+                    ResumeCard(row: row)
+                        .matchedTransitionSource(id: row.key, in: zoom)
+                        .onTapGesture { resume = row }
                 }
             }
         }
         Row(title: "Top 10 today") {
             ForEach(Array(home.top.enumerated()), id: \.element.key) { index, title in
-                TopCard(rank: index + 1, title: title).onTapGesture { selected = title }
+                TopCard(rank: index + 1, title: title)
+                    .matchedTransitionSource(id: title.key, in: zoom)
+                    .onTapGesture { selected = title }
             }
         }
         Row(title: "Trending now", page: ListPage(title: "Trending now", path: "trending/all/week")) {
             ForEach(home.trending, id: \.key) { title in
-                LandscapeCard(title: title).onTapGesture { selected = title }
+                LandscapeCard(title: title)
+                    .matchedTransitionSource(id: title.key, in: zoom)
+                    .onTapGesture { selected = title }
             }
         }
         Row(title: "Top rated", page: ListPage(title: "Top rated", path: "movie/top_rated")) {
             ForEach(home.topRated, id: \.key) { title in
-                Poster(url: title.poster).onTapGesture { selected = title }
+                Poster(url: title.poster)
+                    .matchedTransitionSource(id: title.key, in: zoom)
+                    .onTapGesture { selected = title }
             }
         }
         Row(title: "Popular shows", page: ListPage(title: "Popular shows", path: "tv/popular")) {
             ForEach(home.popularTv, id: \.key) { title in
-                Poster(url: title.poster).onTapGesture { selected = title }
+                Poster(url: title.poster)
+                    .matchedTransitionSource(id: title.key, in: zoom)
+                    .onTapGesture { selected = title }
             }
         }
         if !home.anime.isEmpty {
             Row(title: "Trending anime") {
                 ForEach(home.anime, id: \.key) { title in
-                    Poster(url: title.poster).onTapGesture { selected = title }
+                    Poster(url: title.poster)
+                        .matchedTransitionSource(id: title.key, in: zoom)
+                        .onTapGesture { selected = title }
                 }
             }
         }
@@ -169,7 +213,12 @@ struct RootView: View {
             FlowLayout(spacing: 8) {
                 ForEach(movieGenres, id: \.1) { genre in
                     NavigationLink(value: ListPage(title: genre.0, path: "discover/movie?with_genres=\(genre.1)&sort_by=popularity.desc")) {
-                        Tag(text: genre.0, fill: Color.white.opacity(0.08))
+                        Text(genre.0)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(Theme.soft)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .glassEffect(.regular.interactive(), in: .capsule)
                     }
                 }
             }
@@ -231,8 +280,10 @@ struct Row<Content: View>: View {
             .padding(.horizontal, 16)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 10) { content }
+                    .scrollTargetLayout()
                     .padding(.horizontal, 16)
             }
+            .scrollTargetBehavior(.viewAligned)
         }
     }
 }

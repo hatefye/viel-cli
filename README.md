@@ -81,7 +81,7 @@ minutes; a ten-episode season a little under five.
 
 ## iOS app
 
-`ios/` holds a SwiftUI app built on the same core. The Rust crate in
+`ios/` holds a SwiftUI app (iOS 26, Liquid Glass) built on the same core. The Rust crate in
 `mobile/` compiles to a static library that runs the relay and a small JSON
 API on `127.0.0.1`; the app plays through AVPlayer with Picture in Picture,
 background audio, subtitles, intro skip and progress sync.

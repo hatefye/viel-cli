@@ -12,11 +12,10 @@ struct SheetFrame<Content: View>: View {
                 Button { dismiss() } label: {
                     Text("Close")
                         .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(.white)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Color.white.opacity(0.08), in: Capsule())
+                        .padding(.vertical, 6)
                 }
+                .buttonStyle(.glass)
                 .padding(.horizontal, 16)
                 .padding(.bottom, 10)
             }
@@ -24,6 +23,7 @@ struct SheetFrame<Content: View>: View {
         }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
+        .presentationBackground(.thinMaterial)
     }
 }
 
@@ -127,7 +127,7 @@ struct EpisodesSheet: View {
                 }
             }
         }
-        .onChange(of: chainId) { id in
+        .onChange(of: chainId) { _, id in
             Task { await loadChain(id) }
         }
     }
