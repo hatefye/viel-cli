@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct AccountView: View {
+    var embedded = false
+
     @EnvironmentObject private var core: Core
     @Environment(\.dismiss) private var dismiss
     @State private var username = ""
@@ -61,12 +63,14 @@ struct AccountView: View {
             .scrollContentBackground(.hidden)
             .background(Theme.bg)
             .tint(Theme.accent)
-            .navigationTitle(core.username == nil ? "Sign in" : "Account")
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(embedded ? "Settings" : (core.username == nil ? "Sign in" : "Account"))
+            .navigationBarTitleDisplayMode(embedded ? .large : .inline)
             .toolbarBackground(Theme.bg, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }.foregroundStyle(.white)
+                if !embedded {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") { dismiss() }.foregroundStyle(.white)
+                    }
                 }
             }
             .onChange(of: core.settings.maxHeight) { _, _ in Task { await core.pushSettings() } }

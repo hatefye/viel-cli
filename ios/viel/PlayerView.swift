@@ -20,6 +20,7 @@ struct PlayerView: View {
     @State private var nextUp: Playable?
     @State private var countdown = 0
     @State private var flash: String?
+    @State private var fill = false
 
     init(item: Playable) {
         _current = State(initialValue: item)
@@ -30,27 +31,34 @@ struct PlayerView: View {
             let landscape = geometry.size.width > geometry.size.height
             ZStack {
                 Color.black.ignoresSafeArea()
-                PlayerSurface(model: model).ignoresSafeArea()
+                PlayerSurface(model: model, fill: fill).ignoresSafeArea()
                 gestures
                 if controls {
-                    shade
-                    pauseMeta(landscape)
-                    controlLayer(landscape)
+                    Group {
+                        shade
+                        pauseMeta(landscape)
+                        controlLayer(landscape)
+                    }
+                    .transition(.opacity)
                 }
                 subtitleLayer(landscape)
-                if model.status != nil { statusLayer }
+                if model.status != nil {
+                    FinderView(item: current, model: model, retry: { Task { await start(current) } })
+                        .transition(.opacity)
+                }
                 skipLayer(landscape)
                 nextLayer
                 flashLayer
                 panelLayer(landscape, size: geometry.size)
             }
         }
-        .animation(.smooth(duration: 0.3), value: sheet)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
-        .animation(.smooth(duration: 0.25), value: controls)
+        .animation(.easeInOut(duration: 0.28), value: controls)
         .animation(.smooth(duration: 0.2), value: flash)
         .animation(.smooth(duration: 0.25), value: model.isPlaying)
+        .animation(.easeInOut(duration: 0.3), value: model.status == nil)
+        .animation(.smooth(duration: 0.3), value: sheet)
         .task { await start(current) }
         .onAppear { Orientation.request(.landscape) }
         .onDisappear {
@@ -83,23 +91,6 @@ struct PlayerView: View {
         }
     }
 
-    @ViewBuilder
-    private func panelLayer(_ landscape: Bool, size: CGSize) -> some View {
-        if let which = sheet {
-            ZStack(alignment: landscape ? .trailing : .bottom) {
-                Color.black.opacity(0.35)
-                    .ignoresSafeArea()
-                    .onTapGesture { sheet = nil }
-                sheetContent(which)
-                    .frame(width: landscape ? min(440, size.width * 0.52) : nil)
-                    .frame(maxHeight: landscape ? .infinity : size.height * 0.62)
-                    .glassEffect(.regular, in: .rect(cornerRadius: 28))
-                    .padding(landscape ? 10 : 8)
-                    .transition(.move(edge: landscape ? .trailing : .bottom).combined(with: .opacity))
-            }
-        }
-    }
-
     private func start(_ item: Playable) async {
         current = item
         show()
@@ -108,7 +99,7 @@ struct PlayerView: View {
 
     private func show() {
         hideTask?.cancel()
-        controls = true
+        withAnimation(.easeInOut(duration: 0.28)) { controls = true }
     }
 
     private func scheduleHide() {
@@ -116,18 +107,21 @@ struct PlayerView: View {
         hideTask = Task {
             try? await Task.sleep(nanoseconds: 3_500_000_000)
             guard !Task.isCancelled, model.isPlaying, !scrubbing, sheet == nil else { return }
-            controls = false
+            withAnimation(.easeInOut(duration: 0.35)) { controls = false }
         }
     }
 
     private func poke() {
-        controls = true
+        withAnimation(.easeInOut(duration: 0.28)) { controls = true }
         if model.isPlaying { scheduleHide() }
     }
 
     private func toggleControls() {
         if controls {
-            if model.isPlaying { controls = false }
+            if model.isPlaying {
+                hideTask?.cancel()
+                withAnimation(.easeInOut(duration: 0.28)) { controls = false }
+            }
         } else {
             poke()
         }
@@ -154,13 +148,24 @@ struct PlayerView: View {
                 .onTapGesture { toggleControls() }
         }
         .ignoresSafeArea()
+        .simultaneousGesture(
+            MagnifyGesture()
+                .onEnded { value in
+                    let wantsFill = value.magnification > 1
+                    if wantsFill != fill {
+                        Haptic.select()
+                        withAnimation(.smooth(duration: 0.3)) { fill = wantsFill }
+                        model.log(wantsFill ? "fill screen" : "fit screen")
+                    }
+                }
+        )
     }
 
     private var shade: some View {
         VStack(spacing: 0) {
-            LinearGradient(colors: [.black.opacity(0.6), .clear], startPoint: .top, endPoint: .bottom).frame(height: 120)
+            LinearGradient(colors: [.black.opacity(0.65), .clear], startPoint: .top, endPoint: .bottom).frame(height: 130)
             Spacer()
-            LinearGradient(colors: [.clear, .black.opacity(0.7)], startPoint: .top, endPoint: .bottom).frame(height: 200)
+            LinearGradient(colors: [.clear, .black.opacity(0.8)], startPoint: .top, endPoint: .bottom).frame(height: 220)
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
@@ -172,7 +177,7 @@ struct PlayerView: View {
             Spacer()
             if model.status == nil { centerButtons }
             Spacer()
-            if landscape { landscapeDock } else { portraitDock }
+            bottomBar(landscape)
         }
     }
 
@@ -208,7 +213,7 @@ struct PlayerView: View {
     private var centerButtons: some View {
         GlassEffectContainer(spacing: 28) {
             HStack(spacing: 28) {
-                Button { skip(-10) } label: { RoundIcon(icon: "gobackward.10", size: 54, weight: .regular) }
+                Button { skip(-10) } label: { RoundIcon(icon: "gobackward.10", size: 56, weight: .regular) }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
                 Button {
@@ -217,13 +222,13 @@ struct PlayerView: View {
                     poke()
                 } label: {
                     Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 30, weight: .semibold))
+                        .font(.system(size: 32, weight: .semibold))
                         .contentTransition(.symbolEffect(.replace))
-                        .frame(width: 74, height: 74)
+                        .frame(width: 78, height: 78)
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
-                Button { skip(10) } label: { RoundIcon(icon: "goforward.10", size: 54, weight: .regular) }
+                Button { skip(10) } label: { RoundIcon(icon: "goforward.10", size: 56, weight: .regular) }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
             }
@@ -234,7 +239,7 @@ struct PlayerView: View {
     private var timeline: some View {
         HStack(spacing: 10) {
             Text(Format.clock(model.position))
-                .font(.system(size: 14, weight: .medium))
+                .font(.system(size: 15, weight: .medium))
                 .monospacedDigit()
                 .contentTransition(.numericText())
             Scrubber(position: model.position, duration: model.duration) { target in
@@ -252,7 +257,7 @@ struct PlayerView: View {
     }
 
     private var tools: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 4) {
             if !current.isMovie {
                 toolButton("play.square.stack", "Episodes") { sheet = .episodes }
             }
@@ -265,34 +270,26 @@ struct PlayerView: View {
         }
     }
 
-    private var portraitDock: some View {
-        VStack(spacing: 2) {
-            timeline
-            HStack {
-                tools
-                Spacer()
+    private func bottomBar(_ landscape: Bool) -> some View {
+        Group {
+            if landscape {
+                HStack(spacing: 16) {
+                    timeline
+                    tools
+                }
+            } else {
+                VStack(spacing: 2) {
+                    timeline
+                    HStack {
+                        tools
+                        Spacer()
+                    }
+                }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
         .foregroundStyle(.white)
-        .glassEffect(.regular, in: .rect(cornerRadius: 24))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 8)
-    }
-
-    private var landscapeDock: some View {
-        HStack(spacing: 14) {
-            timeline
-            tools
-        }
-        .padding(.leading, 18)
-        .padding(.trailing, 8)
-        .padding(.vertical, 6)
-        .foregroundStyle(.white)
-        .glassEffect(.regular, in: .capsule)
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
+        .padding(.horizontal, landscape ? 20 : 14)
+        .padding(.bottom, landscape ? 10 : 12)
     }
 
     private func toolButton(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View {
@@ -300,7 +297,10 @@ struct PlayerView: View {
             Haptic.select()
             action()
         } label: {
-            Image(systemName: icon).font(.system(size: 19, weight: .medium)).frame(width: 40, height: 40)
+            Image(systemName: icon)
+                .font(.system(size: 24, weight: .medium))
+                .frame(width: 46, height: 46)
+                .shadow(color: .black.opacity(0.5), radius: 3)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
@@ -356,36 +356,10 @@ struct PlayerView: View {
                     .padding(.vertical, 4)
                     .background(Color.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                     .padding(.horizontal, 24)
-                    .padding(.bottom, controls ? (landscape ? 76 : 120) : 28)
+                    .padding(.bottom, controls ? (landscape ? 72 : 118) : 28)
             }
         }
         .allowsHitTesting(false)
-    }
-
-    private var statusLayer: some View {
-        VStack(spacing: 12) {
-            if !model.failed {
-                ProgressView().tint(.white).scaleEffect(1.3).padding(.top, 4)
-            }
-            Text(model.status ?? "")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(.white)
-                .multilineTextAlignment(.center)
-            if let activity = model.activity, !model.failed {
-                Text(activity).font(.system(size: 12)).foregroundStyle(Theme.muted)
-            }
-            if model.failed {
-                Button("Try again") { Task { await start(current) } }
-                    .buttonStyle(.glassProminent)
-                    .tint(.white)
-                    .foregroundStyle(.black)
-            }
-        }
-        .padding(.horizontal, 22)
-        .padding(.vertical, 18)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
-        .padding(.horizontal, 30)
-        .allowsHitTesting(model.failed)
     }
 
     private func skipLayer(_ landscape: Bool) -> some View {
@@ -407,8 +381,8 @@ struct PlayerView: View {
                     }
                     .buttonStyle(.glassProminent)
                     .tint(.white)
-                    .padding(.trailing, 12)
-                    .padding(.bottom, controls ? (landscape ? 70 : 118) : 28)
+                    .padding(.trailing, 16)
+                    .padding(.bottom, controls ? (landscape ? 68 : 118) : 28)
                     .transition(.scale(scale: 0.9).combined(with: .opacity))
                 }
             }
@@ -462,6 +436,23 @@ struct PlayerView: View {
     }
 
     @ViewBuilder
+    private func panelLayer(_ landscape: Bool, size: CGSize) -> some View {
+        if let which = sheet {
+            ZStack(alignment: landscape ? .trailing : .bottom) {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .onTapGesture { sheet = nil }
+                sheetContent(which)
+                    .frame(width: landscape ? min(440, size.width * 0.52) : nil)
+                    .frame(maxHeight: landscape ? .infinity : size.height * 0.62)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 28))
+                    .padding(landscape ? 10 : 8)
+                    .transition(.move(edge: landscape ? .trailing : .bottom).combined(with: .opacity))
+            }
+        }
+    }
+
+    @ViewBuilder
     private func sheetContent(_ which: PlayerSheet) -> some View {
         switch which {
         case .episodes:
@@ -473,6 +464,97 @@ struct PlayerView: View {
             SettingsSheet(model: model, onSubtitles: { sheet = .subtitles }, onClose: { sheet = nil })
         case .subtitles:
             SubtitlesSheet(model: model, onClose: { sheet = nil })
+        }
+    }
+}
+
+struct FinderView: View {
+    let item: Playable
+    @ObservedObject var model: PlayerModel
+    let retry: () -> Void
+
+    private let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.title.name)
+                    .font(.system(size: 30, weight: .black))
+                    .lineLimit(1)
+                if let episode = item.episode {
+                    Text(episode.label(anime: item.isAnime)).font(.system(size: 15)).foregroundStyle(Theme.muted).lineLimit(1)
+                }
+            }
+            HStack(spacing: 14) {
+                if model.failed {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 24)).foregroundStyle(Theme.accentHi)
+                } else {
+                    ProgressView().tint(.white).scaleEffect(1.1)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.status ?? "").font(.system(size: 16, weight: .bold)).lineLimit(2)
+                    if let activity = model.activity, !model.failed {
+                        Text(activity).font(.system(size: 13)).foregroundStyle(Theme.muted).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                if model.failed {
+                    Button("Try again", action: retry)
+                        .buttonStyle(.glassProminent)
+                        .tint(.white)
+                        .foregroundStyle(.black)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.border, lineWidth: 1))
+            if !model.probes.isEmpty {
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(model.probes, id: \.name) { probe in
+                        HStack(spacing: 10) {
+                            probeDot(probe.state)
+                            Text(probe.label).font(.system(size: 15, weight: .bold)).foregroundStyle(probe.state == "found" || probe.state == "checking" ? .white : Theme.faint)
+                            Spacer(minLength: 0)
+                            Text(probeText(probe.state)).font(.system(size: 12)).foregroundStyle(probe.state == "found" ? Color(hex: 0x7be0a6) : Theme.faint)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color.white.opacity(probe.state == "found" ? 0.08 : 0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+                .animation(.smooth(duration: 0.3), value: model.probes)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(18)
+        .frame(maxWidth: 560)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        .padding(.horizontal, 24)
+        .allowsHitTesting(model.failed)
+    }
+
+    @ViewBuilder
+    private func probeDot(_ state: String) -> some View {
+        switch state {
+        case "checking":
+            ProgressView().tint(.white).scaleEffect(0.7).frame(width: 20, height: 20)
+        case "found":
+            ZStack {
+                Circle().fill(Color(hex: 0x2fbf71)).frame(width: 20, height: 20)
+                Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.black)
+            }
+        default:
+            Circle().stroke(Color.white.opacity(0.15), lineWidth: 2).frame(width: 20, height: 20)
+        }
+    }
+
+    private func probeText(_ state: String) -> String {
+        switch state {
+        case "checking": return "Checking…"
+        case "found": return "Found"
+        case "skipped": return "Slow"
+        default: return "No stream"
         }
     }
 }
@@ -523,12 +605,13 @@ final class PlayerLayerView: UIView {
 
 struct PlayerSurface: UIViewRepresentable {
     let model: PlayerModel
+    var fill = false
 
     func makeUIView(context: Context) -> PlayerLayerView {
         let view = PlayerLayerView()
         view.backgroundColor = .black
         view.playerLayer.player = model.player
-        view.playerLayer.videoGravity = .resizeAspect
+        view.playerLayer.videoGravity = fill ? .resizeAspectFill : .resizeAspect
         if AVPictureInPictureController.isPictureInPictureSupported(), let pip = AVPictureInPictureController(playerLayer: view.playerLayer) {
             pip.canStartPictureInPictureAutomaticallyFromInline = true
             pip.delegate = context.coordinator
@@ -538,7 +621,15 @@ struct PlayerSurface: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: PlayerLayerView, context: Context) {}
+    func updateUIView(_ view: PlayerLayerView, context: Context) {
+        let gravity: AVLayerVideoGravity = fill ? .resizeAspectFill : .resizeAspect
+        if view.playerLayer.videoGravity != gravity {
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(0.3)
+            view.playerLayer.videoGravity = gravity
+            CATransaction.commit()
+        }
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(model: model)
@@ -571,6 +662,8 @@ final class PlayerModel: ObservableObject {
 
     @Published var status: String? = "Finding sources…"
     @Published var activity: String?
+    @Published var probes: [Probe] = []
+    @Published var resolving = false
     @Published var failed = false
     @Published var cue: String?
     @Published var showSkip = false
@@ -620,6 +713,8 @@ final class PlayerModel: ObservableObject {
             cue = nil
             showSkip = false
             streams = []
+            probes = []
+            resolving = true
             position = 0
             duration = 0
             status = "Finding sources…"
@@ -645,6 +740,7 @@ final class PlayerModel: ObservableObject {
             log("resolved [\(reply.streams.map(\.source).joined(separator: ", "))] in \(elapsed)ms")
             await MainActor.run {
                 streams = reply.streams
+                resolving = false
                 if reply.streams.isEmpty {
                     status = "No source has this one right now."
                     failed = true
@@ -657,6 +753,7 @@ final class PlayerModel: ObservableObject {
             guard mine == generation else { return }
             log("resolve failed: \(error.localizedDescription)")
             await MainActor.run {
+                resolving = false
                 status = error.localizedDescription
                 failed = true
                 stopActivity()
@@ -930,15 +1027,19 @@ final class PlayerModel: ObservableObject {
                 }
                 let served: Int
                 let fetching: Fetching?
+                let sources: [Probe]
             }
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                try? await Task.sleep(nanoseconds: 500_000_000)
                 guard !Task.isCancelled else { return }
                 let reply: Activity? = try? await core.get("activity")
-                let text = reply.map { a in
-                    a.fetching.map { "\($0.what) · \(Int($0.seconds))s · \(a.served) parts" } ?? "\(a.served) parts fetched"
+                let text = reply.flatMap { a in
+                    a.fetching.map { "\($0.what) · \(Int($0.seconds))s" } ?? (a.served > 0 ? "\(a.served) parts fetched" : nil)
                 }
-                await MainActor.run { self.activity = text }
+                await MainActor.run {
+                    self.activity = text
+                    if let sources = reply?.sources, sources != self.probes { self.probes = sources }
+                }
             }
         }
     }

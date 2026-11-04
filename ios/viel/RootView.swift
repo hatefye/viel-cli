@@ -8,8 +8,6 @@ struct RootView: View {
     @State private var selected: Title?
     @State private var resume: Resume?
     @State private var playing: Playable?
-    @State private var showSearch = false
-    @State private var showAccount = false
 
     var body: some View {
         NavigationStack {
@@ -50,113 +48,23 @@ struct RootView: View {
                 .environmentObject(core)
         }
         .fullScreenCover(item: $playing) { PlayerView(item: $0).environmentObject(core) }
-        .fullScreenCover(isPresented: $showSearch) { SearchView().environmentObject(core) }
-        .sheet(isPresented: $showAccount, onDismiss: { Task { await load() } }) {
-            AccountView().environmentObject(core)
-        }
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack {
             Text("Viel")
                 .font(.system(size: 30, weight: .heavy))
                 .foregroundStyle(.white)
                 .shadow(color: .black.opacity(0.5), radius: 6, y: 2)
             Spacer()
-            GlassEffectContainer(spacing: 10) {
-                HStack(spacing: 10) {
-                    Button { showSearch = true } label: { RoundIcon(icon: "magnifyingglass") }
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.circle)
-                    Button { showAccount = true } label: { RoundIcon(icon: core.username == nil ? "person" : "person.fill") }
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.circle)
-                }
-            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 6)
+        .allowsHitTesting(false)
     }
 
     private var hero: some View {
-        let detail = home?.hero
-        return ZStack(alignment: .bottom) {
-            GeometryReader { geometry in
-                let offset = geometry.frame(in: .global).minY
-                let stretch = max(offset, 0)
-                Backdrop(url: detail?.poster ?? detail?.backdrop, height: 620 + stretch)
-                    .offset(y: -stretch)
-            }
-            LinearGradient(
-                stops: [
-                    .init(color: Theme.bg.opacity(0.55), location: 0),
-                    .init(color: .clear, location: 0.18),
-                    .init(color: .clear, location: 0.45),
-                    .init(color: Theme.bg.opacity(0.85), location: 0.78),
-                    .init(color: Theme.bg, location: 1),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            if let detail {
-                VStack(spacing: 12) {
-                    Logo(url: detail.logo, name: detail.name, maxWidth: 320, size: 42)
-                        .padding(.horizontal, 24)
-                    HStack(spacing: 12) {
-                        Text("\(Int((detail.rating * 10).rounded()))% match")
-                            .foregroundStyle(Theme.match)
-                            .fontWeight(.semibold)
-                        if !detail.year.isEmpty { Text(detail.year) }
-                        Chip(detail.title.kindLabel)
-                        if let runtime = Format.runtime(detail.runtime) { Text(runtime) }
-                    }
-                    .font(.system(size: 17))
-                    .foregroundStyle(Theme.soft)
-                    if !detail.genres.isEmpty {
-                        Text(detail.genres.prefix(3).joined(separator: " · "))
-                            .font(.system(size: 16))
-                            .foregroundStyle(Theme.soft)
-                    }
-                    if let overview = detail.overview {
-                        Text(overview)
-                            .font(.system(size: 17))
-                            .foregroundStyle(Theme.soft)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-                            .padding(.horizontal, 22)
-                    }
-                    GlassEffectContainer(spacing: 12) {
-                        HStack(spacing: 12) {
-                            Button {
-                                Haptic.tap()
-                                open(detail.title, play: true)
-                            } label: {
-                                Label("Play", systemImage: "play.fill")
-                                    .font(.system(size: 17, weight: .semibold))
-                                    .foregroundStyle(.black)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 4)
-                            }
-                            .buttonStyle(.glassProminent)
-                            .tint(.white)
-                            Button {
-                                selected = detail.title
-                            } label: {
-                                Label("More Info", systemImage: "info.circle")
-                                    .font(.system(size: 17, weight: .semibold))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 4)
-                            }
-                            .buttonStyle(.glass)
-                        }
-                    }
-                    .padding(.top, 6)
-                }
-                .padding(.bottom, 6)
-            }
-        }
-        .frame(height: 620)
-        .clipped()
+        HeroView(items: home?.top ?? [], onPlay: { open($0, play: true) }, onInfo: { selected = $0 })
     }
 
     @ViewBuilder
@@ -167,6 +75,16 @@ struct RootView: View {
                     ResumeCard(row: row)
                         .matchedTransitionSource(id: row.key, in: zoom)
                         .onTapGesture { resume = row }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                Task {
+                                    await core.removeHistory(kind: row.kind, id: row.id)
+                                    await load()
+                                }
+                            } label: {
+                                Label("Remove from Continue Watching", systemImage: "trash")
+                            }
+                        }
                 }
             }
         }

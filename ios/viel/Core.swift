@@ -130,6 +130,15 @@ final class Core: ObservableObject {
         let _: Ok? = try? await post("progress", progress)
     }
 
+    func removeHistory(kind: String, id: UInt64) async {
+        struct Body: Encodable {
+            let kind: String
+            let id: UInt64
+        }
+        let _: Ok? = try? await post("history/remove", Body(kind: kind, id: id))
+        log("history", "removed \(kind) \(id)")
+    }
+
     nonisolated func log(_ tag: String, _ message: String) {
         Task { @MainActor in
             self.append(tag, message)

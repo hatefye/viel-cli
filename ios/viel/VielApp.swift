@@ -24,7 +24,7 @@ struct VielApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            MainView()
                 .environmentObject(core)
                 .preferredColorScheme(.dark)
                 .tint(.white)

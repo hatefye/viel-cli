@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct SearchView: View {
+    var inTab = false
+
     @EnvironmentObject private var core: Core
     @Environment(\.dismiss) private var dismiss
     @FocusState private var focused: Bool
@@ -16,16 +18,18 @@ struct SearchView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Theme.bg.opacity(0.9).ignoresSafeArea()
-                .onTapGesture { dismiss() }
+            Theme.bg.opacity(inTab ? 1 : 0.9).ignoresSafeArea()
+                .onTapGesture { if !inTab { dismiss() } }
             VStack(spacing: 14) {
-                HStack {
-                    Spacer()
-                    Button { dismiss() } label: { RoundIcon(icon: "xmark", size: 40) }
-                        .buttonStyle(.glass)
-                        .buttonBorderShape(.circle)
+                if !inTab {
+                    HStack {
+                        Spacer()
+                        Button { dismiss() } label: { RoundIcon(icon: "xmark", size: 40) }
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.circle)
+                    }
+                    .padding(.horizontal, 16)
                 }
-                .padding(.horizontal, 16)
                 panel
             }
             .padding(.top, 8)

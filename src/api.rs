@@ -421,7 +421,7 @@ impl Api {
         found.into_iter().flatten().collect()
     }
 
-    fn extract(&self, src: &str, path: &str, title: &str, start: Option<f64>) -> Option<Stream> {
+    pub fn extract(&self, src: &str, path: &str, title: &str, start: Option<f64>) -> Option<Stream> {
         let url = format!("{}/proxy/extractor/{}/{}", self.host, src, path);
         let resp = self.client.get(url).timeout(Duration::from_secs(25)).send().ok()?;
         if !resp.status().is_success() {
@@ -686,6 +686,19 @@ impl Api {
         Ok(())
     }
 
+    pub fn remove_history(&self, kind: &str, id: u64) -> Result<()> {
+        let url = format!("{}/api/me/history/{}/{}", self.host, kind, id);
+        let resp = self.authed(self.client.delete(url)).send()?;
+        if !resp.status().is_success() {
+            bail!("could not remove ({})", resp.status());
+        }
+        Ok(())
+    }
+
+    pub fn sources_for(movie: bool) -> Vec<&'static str> {
+        SOURCES.iter().copied().filter(|s| !(movie && *s == "vidbolt")).collect()
+    }
+
     fn title_info(&self, kind: &str, id: u64) -> Option<(String, Option<String>)> {
         let slug = if kind == "tv" { "tv" } else { "movie" };
         let url = format!("{}/proxy/tmdb/{}/{}", self.host, slug, id);
@@ -757,28 +770,28 @@ pub struct HistoryEntry {
     pub title: Option<String>,
 }
 
-fn playable(stream: &Stream) -> bool {
+pub fn playable(stream: &Stream) -> bool {
     let referer = stream.referer.as_deref();
     if !stream.hls {
-        return net::send(&stream.url, referer, Some("bytes=0-4095"))
+        return net::send_with(&stream.url, referer, Some("bytes=0-4095"), 2)
             .and_then(|r| Ok(r.bytes()?.to_vec()))
             .map(|b| net::looks_like_video(&b))
             .unwrap_or(false);
     }
     let check = || -> Result<bool> {
         let mut url = stream.url.clone();
-        let mut text = net::text(&url, referer)?;
+        let mut text = net::send_with(&url, referer, None, 2)?.text()?;
         if hls::is_master(&text) {
             let variant = hls::best(hls::variants(&text, &url), 1080).ok_or_else(|| anyhow!("empty master"))?;
             url = variant.url;
-            text = net::text(&url, referer)?;
+            text = net::send_with(&url, referer, None, 2)?.text()?;
         }
         let segment = text
             .lines()
             .map(str::trim)
             .find(|l| !l.is_empty() && !l.starts_with('#'))
             .ok_or_else(|| anyhow!("empty playlist"))?;
-        let bytes = net::send(&net::join(&url, segment), referer, Some("bytes=0-4095"))?.bytes()?;
+        let bytes = net::send_with(&net::join(&url, segment), referer, Some("bytes=0-4095"), 2)?.bytes()?;
         Ok(net::looks_like_video(&bytes))
     };
     check().unwrap_or(false)

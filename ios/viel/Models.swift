@@ -177,7 +177,9 @@ struct Stream: Decodable, Hashable {
     let subs: [Sub]
     let intro: [Double]?
 
-    var label: String {
+    var label: String { Stream.label(for: source) }
+
+    static func label(for source: String) -> String {
         switch source {
         case "cno": return "Cno"
         case "mapple": return "Mapple"
@@ -191,6 +193,13 @@ struct Stream: Decodable, Hashable {
         default: return source.capitalized
         }
     }
+}
+
+struct Probe: Decodable, Hashable {
+    let name: String
+    let state: String
+
+    var label: String { Stream.label(for: name) }
 }
 
 struct Sub: Decodable, Hashable {

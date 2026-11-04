@@ -4,9 +4,83 @@ use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock, RwLock};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const FIRST_HIT_GRACE: Duration = Duration::from_secs(6);
+const RESOLVE_LIMIT: Duration = Duration::from_secs(25);
+
+#[derive(Clone, Serialize)]
+struct Probe {
+    name: String,
+    state: &'static str,
+}
+
+fn probes() -> &'static Mutex<Vec<Probe>> {
+    static PROBES: OnceLock<Mutex<Vec<Probe>>> = OnceLock::new();
+    PROBES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn mark(name: &str, state: &'static str) {
+    let mut list = probes().lock().unwrap();
+    if let Some(p) = list.iter_mut().find(|p| p.name == name) {
+        p.state = state;
+    }
+}
+
+fn resolve_all<F>(names: Vec<String>, job: F) -> Vec<Stream>
+where
+    F: Fn(&str) -> Option<Stream> + Send + Sync + 'static,
+{
+    *probes().lock().unwrap() = names.iter().map(|n| Probe { name: n.clone(), state: "checking" }).collect();
+    let job = std::sync::Arc::new(job);
+    let (tx, rx) = mpsc::channel();
+    for (index, name) in names.iter().cloned().enumerate() {
+        let tx = tx.clone();
+        let job = job.clone();
+        thread::spawn(move || {
+            let found = job(&name);
+            mark(&name, if found.is_some() { "found" } else { "none" });
+            let _ = tx.send((index, found));
+        });
+    }
+    drop(tx);
+    let started = Instant::now();
+    let mut first_hit: Option<Instant> = None;
+    let mut slots: Vec<Option<Stream>> = names.iter().map(|_| None).collect();
+    let mut pending = names.len();
+    while pending > 0 {
+        let deadline = match first_hit {
+            Some(at) => (at + FIRST_HIT_GRACE).min(started + RESOLVE_LIMIT),
+            None => started + RESOLVE_LIMIT,
+        };
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        match rx.recv_timeout(deadline - now) {
+            Ok((index, found)) => {
+                pending -= 1;
+                if found.is_some() && first_hit.is_none() {
+                    first_hit = Some(Instant::now());
+                }
+                slots[index] = found;
+            }
+            Err(_) => break,
+        }
+    }
+    for (index, slot) in slots.iter().enumerate() {
+        if slot.is_none() {
+            let state = probes().lock().unwrap().get(index).map(|p| p.state).unwrap_or("none");
+            if state == "checking" {
+                mark(&names[index], "skipped");
+            }
+        }
+    }
+    slots.into_iter().flatten().collect()
+}
 
 struct State {
     api: Api,
@@ -128,7 +202,13 @@ fn route(method: &str, path: &str, query: &HashMap<String, String>, body: &[u8])
                 "inflight": a.inflight,
                 "served": a.served,
                 "fetching": a.fetching.map(|(what, seconds)| json!({ "what": what, "seconds": seconds })),
+                "sources": probes().lock().unwrap().clone(),
             })
+        }
+        ("POST", "history/remove") => {
+            let p: RemoveIn = serde_json::from_slice(body)?;
+            api.remove_history(&p.kind, p.id)?;
+            json!({ "ok": true })
         }
         ("POST", "settings") => {
             let s: Settings = serde_json::from_slice(body)?;
@@ -277,6 +357,12 @@ struct Progress {
 struct Login {
     username: String,
     password: String,
+}
+
+#[derive(Deserialize)]
+struct RemoveIn {
+    kind: String,
+    id: u64,
 }
 
 #[derive(Deserialize)]
@@ -479,15 +565,18 @@ fn anime_episodes(api: &Api, host: &str, id: u64, dub: bool) -> Result<Vec<Episo
 }
 
 fn play(api: &Api, lang: &str, p: PlayIn) -> Result<Value> {
-    let started = std::time::Instant::now();
+    let started = Instant::now();
+    relay::reset_activity();
     let streams: Vec<Stream> = match p.kind.as_str() {
-        "movie" => {
-            let id = p.id.to_string();
-            with_subs(api, lang, &id, api.resolve(&id, &p.title, None, true))
-        }
-        "tv" => {
-            let path = format!("{}/{}/{}", p.id, p.season, p.episode as u32);
-            with_subs(api, lang, &path, api.resolve(&path, &p.title, None, false))
+        "movie" | "tv" => {
+            let movie = p.kind == "movie";
+            let path = if movie { p.id.to_string() } else { format!("{}/{}/{}", p.id, p.season, p.episode as u32) };
+            let names: Vec<String> = Api::sources_for(movie).into_iter().map(str::to_string).collect();
+            let client = api.clone();
+            let title = p.title.clone();
+            let target = path.clone();
+            let found = resolve_all(names, move |src| client.extract(src, &target, &title, None).filter(api::playable));
+            with_subs(api, lang, &path, found)
         }
         "anime" => {
             let sources = if p.sources.is_empty() {
@@ -500,12 +589,11 @@ fn play(api: &Api, lang: &str, p: PlayIn) -> Result<Value> {
             } else {
                 p.sources
             };
-            let title = &p.title;
-            let found: Vec<Option<Stream>> = thread::scope(|s| {
-                let jobs: Vec<_> = sources.iter().map(|src| s.spawn(move || api.anime_stream(&src.provider, &src.id, title))).collect();
-                jobs.into_iter().map(|j| j.join().ok().flatten()).collect()
-            });
-            found.into_iter().flatten().collect()
+            let names: Vec<String> = sources.iter().map(|s| s.provider.clone()).collect();
+            let ids: HashMap<String, String> = sources.into_iter().map(|s| (s.provider, s.id)).collect();
+            let client = api.clone();
+            let title = p.title.clone();
+            resolve_all(names, move |provider| ids.get(provider).and_then(|id| client.anime_stream(provider, id, &title)))
         }
         other => bail!("unknown kind {other}"),
     };

@@ -5,6 +5,7 @@ struct DetailsView: View {
     let resume: Resume?
 
     @EnvironmentObject private var core: Core
+    @ObservedObject private var watchlist = Watchlist.shared
     @Environment(\.dismiss) private var dismiss
     @State private var details: Details?
     @State private var list: EpisodeList?
@@ -25,6 +26,7 @@ struct DetailsView: View {
     private var isMovie: Bool { title.isMovie }
     private var isAnime: Bool { title.isAnime }
     private var chain: [Season] { title.seasons }
+    private var shown: Title { details?.title ?? title }
 
     private var active: Title {
         guard let entry = chain.first(where: { $0.id == seasonId }) else { return title }
@@ -39,6 +41,13 @@ struct DetailsView: View {
         guard let list else { return [] }
         if isAnime { return Array(list.episodes.indices) }
         return list.episodes.indices.filter { list.episodes[$0].season == season }
+    }
+
+    private var seasonLabel: String {
+        if isAnime, chain.count > 1, let entry = chain.first(where: { $0.id == seasonId }) {
+            return "Season \(entry.season)"
+        }
+        return "Season \(season)"
     }
 
     var body: some View {
@@ -72,54 +81,72 @@ struct DetailsView: View {
     }
 
     private var header: some View {
-        let shown = details?.title ?? title
-        return ZStack(alignment: .bottom) {
-            Backdrop(url: shown.backdrop ?? shown.poster, height: 330)
-            LinearGradient(
-                stops: [
-                    .init(color: Theme.bg.opacity(0.35), location: 0),
-                    .init(color: .clear, location: 0.25),
-                    .init(color: Theme.bg.opacity(0.7), location: 0.75),
-                    .init(color: Theme.bg, location: 1),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
+        ZStack(alignment: .bottom) {
+            Backdrop(url: shown.backdrop ?? shown.poster, height: 340)
+                .mask(
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black, location: 0),
+                            .init(color: .black, location: 0.55),
+                            .init(color: .black.opacity(0.5), location: 0.8),
+                            .init(color: .clear, location: 1),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+            LinearGradient(colors: [Theme.bg.opacity(0.3), .clear], startPoint: .top, endPoint: .center)
             Logo(url: details?.logo, name: shown.name, maxWidth: 300, size: 36)
                 .padding(.horizontal, 20)
-                .padding(.bottom, 4)
+                .padding(.bottom, 6)
         }
-        .frame(height: 330)
+        .frame(height: 340)
         .clipped()
     }
 
     private var info: some View {
-        let shown = details?.title ?? title
-        return VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
                 if !shown.year.isEmpty {
                     Text(shown.year).font(.system(size: 22, weight: .medium))
                 }
                 Chip("HD")
-                if let runtime = Format.runtime(details?.runtime) { Chip(runtime) }
+                if isMovie || isAnime {
+                    if let runtime = Format.runtime(details?.runtime) { Chip(runtime) }
+                } else if let count = details?.seasonCount, count > 0 {
+                    Chip(count == 1 ? "1 season" : "\(count) seasons")
+                }
                 if let rating = shown.ratingText { Chip(rating) }
             }
-            HStack(spacing: 14) {
-                Button {
-                    Haptic.tap()
-                    play(resuming: true)
-                } label: {
-                    Label(resume?.resumeAt != nil ? "Resume" : "Play", systemImage: "play.fill")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 5)
+            GlassEffectContainer(spacing: 12) {
+                HStack(spacing: 12) {
+                    Button {
+                        Haptic.tap()
+                        play(resuming: true)
+                    } label: {
+                        Label(resume?.resumeAt != nil ? "Resume" : "Play", systemImage: "play.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 7)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .tint(.white)
+                    Button {
+                        Haptic.select()
+                        watchlist.toggle(shown)
+                    } label: {
+                        Image(systemName: watchlist.contains(shown) ? "checkmark" : "plus")
+                            .font(.system(size: 20, weight: .medium))
+                            .frame(width: 50, height: 50)
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                 }
-                .buttonStyle(.glassProminent)
-                .tint(.white)
-                if let resume, resume.resumeAt != nil {
-                    Text(resume.label).font(.system(size: 14)).foregroundStyle(Theme.muted)
-                }
+            }
+            if let resume, resume.resumeAt != nil {
+                Text("Continue · \(resume.label)").font(.system(size: 14)).foregroundStyle(Theme.muted)
             }
             if let overview = shown.overview ?? details?.overview {
                 Text(overview)
@@ -135,24 +162,24 @@ struct DetailsView: View {
                 (Text("Genres: ").fontWeight(.semibold).foregroundColor(.white) + Text(shown.genres.joined(separator: ", ")).foregroundColor(Theme.muted))
                     .font(.system(size: 16))
             }
+            if !isMovie {
+                Divider().overlay(Theme.border).padding(.top, 6)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
     }
 
     private var episodes: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 12) {
-                Text(isAnime ? "Episodes" : "Season \(season)")
-                    .font(.system(size: 24, weight: .bold))
-                Spacer()
                 if isAnime, chain.count > 1 {
                     Menu {
                         ForEach(chain, id: \.id) { entry in
                             Button("\(entry.season). \(entry.title)") { seasonId = entry.id }
                         }
                     } label: {
-                        menuLabel("S\(chain.first(where: { $0.id == seasonId })?.season ?? 1)")
+                        seasonPill(seasonLabel)
                     }
                 } else if !isAnime, seasonNumbers.count > 1 {
                     Menu {
@@ -160,9 +187,12 @@ struct DetailsView: View {
                             Button("Season \(number)") { season = number }
                         }
                     } label: {
-                        menuLabel("S\(season)")
+                        seasonPill(seasonLabel)
                     }
+                } else {
+                    seasonPill(isAnime ? "Episodes" : seasonLabel)
                 }
+                Spacer()
                 if isAnime {
                     Button {
                         Haptic.select()
@@ -177,14 +207,17 @@ struct DetailsView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 28)
+            .padding(.top, 14)
 
             if let list {
                 ForEach(visibleEpisodes, id: \.self) { index in
                     let episode = list.episodes[index]
                     let current = resume.map { ($0.season == episode.season || isAnime) && $0.episode == Int(episode.number) } ?? false
                     EpisodeRow(episode: episode, highlighted: current, runtime: episode.runtime ?? details?.runtime, subtitle: current ? resume?.label : nil)
-                        .onTapGesture { play(index: index, startAt: current ? resume?.resumeAt : nil) }
+                        .onTapGesture {
+                            Haptic.tap()
+                            play(index: index, startAt: current ? resume?.resumeAt : nil)
+                        }
                 }
                 if list.episodes.isEmpty {
                     Text("No episodes yet").foregroundStyle(Theme.muted).padding(.horizontal, 16)
@@ -201,20 +234,18 @@ struct DetailsView: View {
         }
     }
 
-    private func menuLabel(_ text: String) -> some View {
-        HStack(spacing: 6) {
-            Text(text).font(.system(size: 17, weight: .bold))
-            Image(systemName: "chevron.down").font(.system(size: 13, weight: .semibold))
-        }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .glassEffect(.regular.interactive(), in: .capsule)
+    private func seasonPill(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(.black)
+            .padding(.horizontal, 22)
+            .padding(.vertical, 11)
+            .background(Color.white, in: Capsule())
     }
 
     private func play(resuming: Bool) {
         if isMovie {
-            playing = Playable(title: details?.title ?? title, episodes: [], index: -1, dub: false, startAt: resuming ? resume?.resumeAt : nil, chain: [])
+            playing = Playable(title: shown, episodes: [], index: -1, dub: false, startAt: resuming ? resume?.resumeAt : nil, chain: [])
             return
         }
         guard let list, !list.episodes.isEmpty else { return }
@@ -260,32 +291,39 @@ struct EpisodeRow: View {
     var subtitle: String?
 
     var body: some View {
-        HStack(spacing: 14) {
-            Poster(url: episode.still, width: 100, height: 58, radius: 8)
+        HStack(alignment: .top, spacing: 14) {
+            ZStack(alignment: .topLeading) {
+                Poster(url: episode.still, width: 130, height: 76, radius: 8)
+                Text("E\(episode.numberText)")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                    .padding(6)
+            }
             VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    Text(episode.numberText)
-                        .font(.system(size: 20))
-                        .foregroundStyle(highlighted ? Theme.accentHi : Theme.muted)
-                    Text(episode.displayName)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(highlighted ? Theme.accentHi : .white)
-                        .lineLimit(1)
+                Text(episode.displayName)
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(highlighted ? Theme.accentHi : .white)
+                    .lineLimit(1)
+                if !episode.overview.isEmpty {
+                    Text(episode.overview)
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.soft)
+                        .lineLimit(2)
                 }
-                HStack(spacing: 6) {
-                    if let subtitle {
-                        Text(subtitle).foregroundStyle(Theme.accentHi).fontWeight(.semibold)
-                    } else if let runtime = Format.runtime(runtime) {
-                        Text(runtime).foregroundStyle(Theme.muted)
-                    }
+                if let subtitle {
+                    Text(subtitle).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.accentHi)
+                } else if let runtime = Format.runtime(runtime) {
+                    Text(runtime).font(.system(size: 14)).foregroundStyle(Theme.muted)
                 }
-                .font(.system(size: 14))
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(highlighted ? Color.white.opacity(0.06) : .clear)
+        .padding(.vertical, 10)
+        .background(highlighted ? Color.white.opacity(0.05) : .clear)
         .contentShape(Rectangle())
     }
 }
