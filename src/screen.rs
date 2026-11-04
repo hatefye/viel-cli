@@ -8,7 +8,8 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{backend::CrosstermBackend, Terminal};
-use ratatui_image::picker::{Picker, ProtocolType};
+use ratatui_image::picker::{Capability, Picker, ProtocolType};
+use ratatui_image::FontSize;
 use ratatui_image::protocol::Protocol;
 use ratatui_image::{Image, Resize};
 use std::collections::{HashMap, HashSet};
@@ -78,29 +79,93 @@ impl Tui {
     }
 }
 
-pub fn init_images() {
+static CELL: std::sync::OnceLock<Option<FontSize>> = std::sync::OnceLock::new();
+
+pub fn init_images(cell: Option<(u16, u16)>) {
+    let _ = CELL.set(cell.map(|(w, h)| FontSize::new(w, h)));
     picker();
 }
 
+#[allow(deprecated)]
 fn picker() -> &'static Picker {
     static PICKER: std::sync::OnceLock<Picker> = std::sync::OnceLock::new();
     PICKER.get_or_init(|| {
         use std::io::IsTerminal;
         let forced = std::env::var("VIEL_IMAGES").unwrap_or_default().to_lowercase();
         let tty = std::io::stdin().is_terminal() && stdout().is_terminal();
-        let mut picker = match forced.as_str() {
-            "halfblocks" | "off" | "0" => Picker::halfblocks(),
-            _ if !tty || (forced.is_empty() && !graphics_terminal()) => Picker::halfblocks(),
-            _ => Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks()),
+        let wt = cfg!(windows) && !std::env::var("WT_SESSION").unwrap_or_default().is_empty();
+        let mut note = String::new();
+        let mut probe = || match Picker::from_query_stdio() {
+            Ok(p) => {
+                note = "probe ok".into();
+                Some(p)
+            }
+            Err(e) => {
+                note = format!("probe failed: {e}");
+                None
+            }
         };
-        match forced.as_str() {
-            "sixel" => picker.set_protocol_type(ProtocolType::Sixel),
-            "kitty" => picker.set_protocol_type(ProtocolType::Kitty),
-            "iterm2" => picker.set_protocol_type(ProtocolType::Iterm2),
-            _ => {}
-        }
+        let picker = match forced.as_str() {
+            "halfblocks" | "off" | "0" => Picker::halfblocks(),
+            "sixel" | "kitty" | "iterm2" => {
+                let mut p = probe().unwrap_or_else(|| Picker::from_fontsize(cell_guess()));
+                p.set_protocol_type(match forced.as_str() {
+                    "kitty" => ProtocolType::Kitty,
+                    "iterm2" => ProtocolType::Iterm2,
+                    _ => ProtocolType::Sixel,
+                });
+                p
+            }
+            _ if !tty => Picker::halfblocks(),
+            _ if !graphics_terminal() => {
+                note = "terminal not known to draw images".into();
+                Picker::halfblocks()
+            }
+            _ if wt => {
+                note = "windows terminal, cell size assumed".into();
+                let mut p = Picker::from_fontsize(cell_guess());
+                p.set_protocol_type(ProtocolType::Sixel);
+                p
+            }
+            _ if cfg!(windows) => {
+                note = "not windows terminal".into();
+                Picker::halfblocks()
+            }
+            _ => match probe() {
+                Some(p) if p.protocol_type() != ProtocolType::Halfblocks => p,
+                Some(p) if p.capabilities().contains(&Capability::Sixel) => {
+                    note = "sixel reported, cell size assumed".into();
+                    let mut q = Picker::from_fontsize(cell_guess());
+                    q.set_protocol_type(ProtocolType::Sixel);
+                    q
+                }
+                Some(p) => p,
+                None => Picker::halfblocks(),
+            },
+        };
+        let fs = picker.font_size();
+        let _ = INFO.set(format!("{:?} · cell {}x{} · {note}", picker.protocol_type(), fs.width, fs.height).to_lowercase());
         picker
     })
+}
+
+static INFO: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn image_info() -> String {
+    picker();
+    INFO.get().cloned().unwrap_or_default()
+}
+
+fn cell_guess() -> FontSize {
+    if let Some(Some(cell)) = CELL.get() {
+        return *cell;
+    }
+    let custom = std::env::var("VIEL_CELL").ok().and_then(|v| {
+        let v = v.to_lowercase();
+        let (w, h) = v.split_once('x')?;
+        Some(FontSize::new(w.trim().parse().ok()?, h.trim().parse().ok()?))
+    });
+    custom.unwrap_or_else(|| FontSize::new(8, 16))
 }
 
 fn graphics_terminal() -> bool {
@@ -114,9 +179,6 @@ fn graphics_terminal() -> bool {
         || ["kitty", "ghostty", "foot", "contour", "mlterm", "st-"].iter().any(|t| term.contains(t))
 }
 
-pub fn image_protocol() -> String {
-    format!("{:?}", picker().protocol_type()).to_lowercase()
-}
 
 impl Drop for Tui {
     fn drop(&mut self) {

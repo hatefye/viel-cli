@@ -72,6 +72,7 @@ enum Setting {
     Audio,
     Parallel,
     Quality,
+    Cell,
     Back,
 }
 
@@ -85,6 +86,7 @@ impl fmt::Display for Setting {
             Setting::Audio => "default anime audio (sub/dub)",
             Setting::Parallel => "parallel downloads",
             Setting::Quality => "max quality",
+            Setting::Cell => "image cell size (poster scale)",
             Setting::Back => "back",
         };
         f.write_str(label)
@@ -132,8 +134,17 @@ fn main() {
 }
 
 fn app() -> Result<()> {
+    let cfg_cell = Config::load().ok().and_then(|c| c.cell());
+    if std::env::args().any(|a| a == "--probe") {
+        screen::init_images(cfg_cell);
+        println!("images: {}", screen::image_info());
+        for k in ["WT_SESSION", "TERM", "TERM_PROGRAM", "KITTY_WINDOW_ID", "VIEL_IMAGES", "VIEL_CELL"] {
+            println!("{k}={}", std::env::var(k).unwrap_or_default());
+        }
+        return Ok(());
+    }
     ui::theme();
-    screen::init_images();
+    screen::init_images(cfg_cell);
     let mut cfg = Config::load()?;
     ensure_player(&mut cfg);
     viel::relay::set_max_height(cfg.max_height);
@@ -578,8 +589,10 @@ fn settings(cfg: &mut Config) -> Result<()> {
         println!("subtitle language: {}", cfg.subtitle_lang);
         println!("anime audio:       {}", cfg.audio);
         println!("parallel downloads: {}", cfg.parallel_downloads);
-        println!("max quality:       {}p\n", cfg.max_height);
-        let options = vec![Setting::Host, Setting::Player, Setting::Downloads, Setting::Subtitle, Setting::Audio, Setting::Parallel, Setting::Quality, Setting::Back];
+        println!("max quality:       {}p", cfg.max_height);
+        println!("image cell size:   {}", if cfg.image_cell.is_empty() { "auto" } else { cfg.image_cell.as_str() });
+        println!("images:            {}\n", screen::image_info());
+        let options = vec![Setting::Host, Setting::Player, Setting::Downloads, Setting::Subtitle, Setting::Audio, Setting::Parallel, Setting::Quality, Setting::Cell, Setting::Back];
         match ui::select("settings", options)? {
             Some(Setting::Host) => edit_field(&mut cfg.host, "server host (e.g. https://viel.tv)")?,
             Some(Setting::Player) => edit_field(&mut cfg.player, "player command or full path")?,
@@ -599,6 +612,13 @@ fn settings(cfg: &mut Config) -> Result<()> {
                 if let Some(h) = ui::select("max quality", vec![720u32, 1080, 1440, 2160])? {
                     cfg.max_height = h;
                     viel::relay::set_max_height(h);
+                }
+            }
+            Some(Setting::Cell) => {
+                if let Some(v) = ui::text("cell size in pixels, WIDTHxHEIGHT (e.g. 9x20), empty for auto")? {
+                    cfg.image_cell = v.trim().to_lowercase();
+                    println!("takes effect next start");
+                    sleep(Duration::from_millis(900));
                 }
             }
             Some(Setting::Back) | None => return Ok(()),

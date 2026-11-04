@@ -18,6 +18,16 @@ pub struct Config {
     pub parallel_downloads: usize,
     #[serde(default = "default_height")]
     pub max_height: u32,
+    #[serde(default)]
+    pub image_cell: String,
+}
+
+impl Config {
+    pub fn cell(&self) -> Option<(u16, u16)> {
+        let v = self.image_cell.to_lowercase();
+        let (w, h) = v.split_once('x')?;
+        Some((w.trim().parse().ok()?, h.trim().parse().ok()?))
+    }
 }
 
 impl Default for Config {
@@ -30,6 +40,7 @@ impl Default for Config {
             audio: default_audio(),
             parallel_downloads: default_parallel(),
             max_height: default_height(),
+            image_cell: String::new(),
         }
     }
 }
