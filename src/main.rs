@@ -460,40 +460,11 @@ fn play_movie(api: &Api, cfg: &Config, logged_in: bool, title: &Title, start: Op
 }
 
 fn with_subs(api: &Api, cfg: &Config, path: &str, mut streams: Vec<Stream>) -> Vec<Stream> {
-    let pref = cfg.subtitle_lang.to_lowercase();
-    let mut subs: Vec<_> = api
-        .subtitles(path)
-        .into_iter()
-        .filter(|s| lang_matches(&s.lang, &pref) || lang_matches(&s.lang, "en"))
-        .collect();
-    subs.sort_by_key(|s| !lang_matches(&s.lang, &pref));
-    subs.truncate(3);
+    let subs = api::pick_subs(api.subtitles(path), &cfg.subtitle_lang);
     for s in &mut streams {
         s.subs = subs.clone();
     }
     streams
-}
-
-fn lang_matches(lang: &str, pref: &str) -> bool {
-    let l = lang.to_lowercase();
-    if l.starts_with(pref) {
-        return true;
-    }
-    let name = match pref {
-        "en" => "english",
-        "es" => "spanish",
-        "fr" => "french",
-        "pt" => "portuguese",
-        "de" => "german",
-        "ja" => "japanese",
-        "ar" => "arabic",
-        "it" => "italian",
-        "ru" => "russian",
-        "ko" => "korean",
-        "zh" => "chinese",
-        _ => "",
-    };
-    !name.is_empty() && l.starts_with(name)
 }
 
 #[allow(clippy::too_many_arguments)]

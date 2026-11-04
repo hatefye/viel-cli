@@ -1,0 +1,58 @@
+name: ios
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build core
+        run: cargo build -p viel-mobile --release --target aarch64-apple-ios
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate --spec ios/project.yml
+
+      - name: Build app
+        run: |
+          xcodebuild \
+            -project ios/viel.xcodeproj \
+            -scheme viel \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY= \
+            build
+
+      - name: Package IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/viel.app Payload/
+          zip -qr viel.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: viel-ipa
+          path: viel.ipa
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: viel.ipa

@@ -79,6 +79,25 @@ start rate-limiting. Each finished file is remuxed locally into `.mkv` with the
 subtitle in your language embedded. A full episode usually takes one to two
 minutes; a ten-episode season a little under five.
 
+## iOS app
+
+`ios/` holds a SwiftUI app built on the same core. The Rust crate in
+`mobile/` compiles to a static library that runs the relay and a small JSON
+API on `127.0.0.1`; the app plays through AVPlayer with Picture in Picture,
+background audio, subtitles, intro skip and progress sync.
+
+It is sideload only. Every push builds an unsigned `viel.ipa` on GitHub
+Actions (`.github/workflows/ios.yml`); install it with Sideloadly or AltStore
+using your Apple ID. To build locally on a Mac:
+
+```
+rustup target add aarch64-apple-ios
+cargo build -p viel-mobile --release --target aarch64-apple-ios
+brew install xcodegen
+xcodegen generate --spec ios/project.yml
+open ios/viel.xcodeproj
+```
+
 ## Configuration
 
 `~/.config/viel/config.toml`:

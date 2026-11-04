@@ -1,10 +1,18 @@
 pub mod api;
-pub mod config;
-pub mod deps;
-pub mod download;
 pub mod hls;
+pub mod local;
 pub mod net;
-pub mod player;
 pub mod relay;
+
+#[cfg(feature = "cli")]
+pub mod config;
+#[cfg(feature = "cli")]
+pub mod deps;
+#[cfg(feature = "cli")]
+pub mod download;
+#[cfg(feature = "cli")]
+pub mod player;
+#[cfg(feature = "cli")]
 pub mod screen;
+#[cfg(feature = "cli")]
 pub mod ui;

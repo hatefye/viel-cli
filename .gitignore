@@ -1,3 +1,7 @@
-
 /target
 dist/
+ios/viel.xcodeproj
+ios/build
+build/
+Payload/
+*.ipa

@@ -1,0 +1,12 @@
+[package]
+name = "viel-mobile"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "viel_mobile"
+crate-type = ["staticlib"]
+
+[dependencies]
+viel = { path = "..", default-features = false }

@@ -6,24 +6,37 @@ description = "Terminal client for viel: search and watch movies, TV, and anime 
 license = "MIT"
 repository = "https://github.com/kashiuer/viel-cli"
 
+[workspace]
+members = ["mobile"]
+resolver = "2"
+
+[lib]
+name = "viel"
+path = "src/lib.rs"
+
 [[bin]]
 name = "viel"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:inquire", "dep:directories", "dep:toml", "dep:rand", "dep:crossterm", "dep:image", "dep:ratatui", "dep:ratatui-image"]
 
 [dependencies]
 anyhow = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "http2"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-inquire = "0.7"
-directories = "5"
-toml = "0.8"
-rand = "0.8"
-crossterm = "0.25"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 urlencoding = "2"
-ratatui = "0.30"
-ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
+inquire = { version = "0.7", optional = true }
+directories = { version = "5", optional = true }
+toml = { version = "0.8", optional = true }
+rand = { version = "0.8", optional = true }
+crossterm = { version = "0.25", optional = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"], optional = true }
+ratatui = { version = "0.30", optional = true }
+ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"], optional = true }
 
 [profile.release]
 strip = true

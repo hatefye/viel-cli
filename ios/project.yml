@@ -1,0 +1,38 @@
+name: viel
+options:
+  bundleIdPrefix: tv.viel
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+targets:
+  viel:
+    type: application
+    platform: iOS
+    sources:
+      - path: viel
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tv.viel.app
+        PRODUCT_NAME: viel
+        INFOPLIST_FILE: viel/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_OBJC_BRIDGING_HEADER: viel/Bridging.h
+        HEADER_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/../mobile/include"
+        LIBRARY_SEARCH_PATHS:
+          - "$(PROJECT_DIR)/../target/aarch64-apple-ios/release"
+        OTHER_LDFLAGS:
+          - "-lviel_mobile"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        DEVELOPMENT_TEAM: ""
+        ENABLE_BITCODE: NO

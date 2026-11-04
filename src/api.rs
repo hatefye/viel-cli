@@ -637,6 +637,36 @@ fn playable(stream: &Stream) -> bool {
     check().unwrap_or(false)
 }
 
+pub fn pick_subs(all: Vec<Subtitle>, pref: &str) -> Vec<Subtitle> {
+    let pref = pref.to_lowercase();
+    let mut subs: Vec<_> = all.into_iter().filter(|s| lang_matches(&s.lang, &pref) || lang_matches(&s.lang, "en")).collect();
+    subs.sort_by_key(|s| !lang_matches(&s.lang, &pref));
+    subs.truncate(3);
+    subs
+}
+
+pub fn lang_matches(lang: &str, pref: &str) -> bool {
+    let l = lang.to_lowercase();
+    if l.starts_with(pref) {
+        return true;
+    }
+    let name = match pref {
+        "en" => "english",
+        "es" => "spanish",
+        "fr" => "french",
+        "pt" => "portuguese",
+        "de" => "german",
+        "ja" => "japanese",
+        "ar" => "arabic",
+        "it" => "italian",
+        "ru" => "russian",
+        "ko" => "korean",
+        "zh" => "chinese",
+        _ => "",
+    };
+    !name.is_empty() && l.starts_with(name)
+}
+
 fn remaining(seconds: f64) -> String {
     let total = seconds.max(0.0) as u64;
     format!("{}:{:02}", total / 60, total % 60)
