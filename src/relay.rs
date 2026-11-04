@@ -174,20 +174,39 @@ fn serve(conn: TcpStream) -> Result<()> {
         }
         let mut body = vec![0u8; length.min(1 << 20)];
         reader.read_exact(&mut body)?;
+        let started = Instant::now();
+        let target = line.split_whitespace().nth(1).unwrap_or("?").to_string();
         let keep = match parse(&line) {
             Some((method, path, query)) => respond(&mut out, Request { method, path, query, body, range }),
             None => reply(&mut out, "400 Bad Request", "text/plain", b"bad request").map(|_| true).map_err(Into::into),
         };
+        let took = started.elapsed().as_secs_f32();
+        if took > 2.0 && !target.starts_with("/api/") {
+            local::log("relay", format!("slow {took:.1}s {}", describe(&target)));
+        }
         match keep {
             Ok(true) if !close => continue,
             Ok(_) => return Ok(()),
             Err(err) => {
-                local::log("relay", format!("{} → {err}", line.split_whitespace().nth(1).unwrap_or("?").chars().take(160).collect::<String>()));
+                local::log("relay", format!("{err} ← {}", describe(&target)));
                 let _ = reply(&mut out, "502 Bad Gateway", "text/plain", err.to_string().as_bytes());
                 return Ok(());
             }
         }
     }
+}
+
+fn describe(target: &str) -> String {
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let url = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("u="))
+        .and_then(|v| urlencoding::decode(v).ok())
+        .map(|u| u.into_owned())
+        .unwrap_or_default();
+    let host = net::host(&url);
+    let tail: String = url.rsplit('/').next().unwrap_or("").chars().take(40).collect();
+    format!("{path} {host}/…/{tail}")
 }
 
 fn reply(out: &mut TcpStream, status: &str, kind: &str, body: &[u8]) -> io::Result<()> {

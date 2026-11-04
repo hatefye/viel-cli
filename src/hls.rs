@@ -181,6 +181,12 @@ pub fn trim_master(text: &str, base: &str, max_height: u32, lang: &str) -> Optio
     inf = inf
         .split(',')
         .filter(|kv| !kv.starts_with("SUBTITLES=") && !kv.starts_with("CLOSED-CAPTIONS="))
+        .map(|kv| match kv.split_once('=') {
+            Some((key @ ("BANDWIDTH" | "AVERAGE-BANDWIDTH" | "#EXT-X-STREAM-INF:BANDWIDTH"), value)) => {
+                value.parse::<u64>().map(|b| format!("{key}={}", b * 3)).unwrap_or_else(|_| kv.to_string())
+            }
+            _ => kv.to_string(),
+        })
         .collect::<Vec<_>>()
         .join(",");
     out.push(inf);

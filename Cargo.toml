@@ -1,6 +1,6 @@
 [package]
 name = "viel"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 description = "Terminal client for viel: search and watch movies, TV, and anime via mpv"
 license = "MIT"

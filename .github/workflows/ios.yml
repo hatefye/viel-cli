@@ -20,6 +20,8 @@ jobs:
 
       - name: Build core
         run: cargo build -p viel-mobile --release --target aarch64-apple-ios
+        env:
+          IPHONEOS_DEPLOYMENT_TARGET: "16.0"
 
       - name: Select Xcode
         run: |

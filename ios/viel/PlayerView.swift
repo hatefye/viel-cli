@@ -640,6 +640,11 @@ final class PlayerModel: ObservableObject {
         Task {
             do {
                 let reply = try await URLSession.shared.data(from: url)
+                let code = (reply.1 as? HTTPURLResponse)?.statusCode ?? 0
+                guard code == 200 else {
+                    self.log("subtitles \(lang) failed: relay \(code) \(String(decoding: reply.0.prefix(120), as: UTF8.self))")
+                    return
+                }
                 let parsed = Subtitles.parse(String(decoding: reply.0, as: UTF8.self))
                 await MainActor.run {
                     if mine == self.generation, self.subIndex == index {
