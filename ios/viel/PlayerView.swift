@@ -42,8 +42,10 @@ struct PlayerView: View {
                 skipLayer(landscape)
                 nextLayer
                 flashLayer
+                panelLayer(landscape, size: geometry.size)
             }
         }
+        .animation(.smooth(duration: 0.3), value: sheet)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .animation(.smooth(duration: 0.25), value: controls)
@@ -79,8 +81,22 @@ struct PlayerView: View {
                 await start(next)
             }
         }
-        .sheet(item: $sheet) { which in
-            sheetContent(which).environmentObject(core)
+    }
+
+    @ViewBuilder
+    private func panelLayer(_ landscape: Bool, size: CGSize) -> some View {
+        if let which = sheet {
+            ZStack(alignment: landscape ? .trailing : .bottom) {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .onTapGesture { sheet = nil }
+                sheetContent(which)
+                    .frame(width: landscape ? min(440, size.width * 0.52) : nil)
+                    .frame(maxHeight: landscape ? .infinity : size.height * 0.62)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 28))
+                    .padding(landscape ? 10 : 8)
+                    .transition(.move(edge: landscape ? .trailing : .bottom).combined(with: .opacity))
+            }
         }
     }
 
@@ -449,14 +465,14 @@ struct PlayerView: View {
     private func sheetContent(_ which: PlayerSheet) -> some View {
         switch which {
         case .episodes:
-            EpisodesSheet(current: current) { item in
+            EpisodesSheet(current: current, onPick: { item in
                 sheet = nil
                 Task { await start(item) }
-            }
+            }, onClose: { sheet = nil })
         case .settings:
-            SettingsSheet(model: model) { sheet = .subtitles }
+            SettingsSheet(model: model, onSubtitles: { sheet = .subtitles }, onClose: { sheet = nil })
         case .subtitles:
-            SubtitlesSheet(model: model)
+            SubtitlesSheet(model: model, onClose: { sheet = nil })
         }
     }
 }

@@ -1,35 +1,30 @@
 import SwiftUI
 
 struct SheetFrame<Content: View>: View {
-    @Environment(\.dismiss) private var dismiss
+    let onClose: () -> Void
     @ViewBuilder let content: Content
 
     var body: some View {
-        ZStack {
-            Theme.bg2.ignoresSafeArea()
-            VStack(spacing: 14) {
-                content
-                Button { dismiss() } label: {
-                    Text("Close")
-                        .font(.system(size: 17, weight: .medium))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.glass)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 10)
+        VStack(spacing: 14) {
+            Capsule().fill(Color.white.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 8)
+            content
+            Button { onClose() } label: {
+                Text("Close")
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
             }
-            .padding(.top, 22)
+            .buttonStyle(.glass)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 12)
         }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-        .presentationBackground(.thinMaterial)
     }
 }
 
 struct EpisodesSheet: View {
     let current: Playable
     let onPick: (Playable) -> Void
+    let onClose: () -> Void
 
     @EnvironmentObject private var core: Core
     @State private var season: Int
@@ -39,9 +34,10 @@ struct EpisodesSheet: View {
     @State private var query = ""
     @State private var loading = false
 
-    init(current: Playable, onPick: @escaping (Playable) -> Void) {
+    init(current: Playable, onPick: @escaping (Playable) -> Void, onClose: @escaping () -> Void) {
         self.current = current
         self.onPick = onPick
+        self.onClose = onClose
         _season = State(initialValue: current.episode?.season ?? 1)
         _chainId = State(initialValue: current.title.id)
         _episodes = State(initialValue: current.episodes)
@@ -63,7 +59,7 @@ struct EpisodesSheet: View {
     }
 
     var body: some View {
-        SheetFrame {
+        SheetFrame(onClose: onClose) {
             HStack(spacing: 14) {
                 Text(current.isAnime ? title.name : "Season \(season)")
                     .font(.system(size: 28, weight: .bold))
@@ -154,18 +150,19 @@ struct EpisodesSheet: View {
 struct SettingsSheet: View {
     @ObservedObject var model: PlayerModel
     let onSubtitles: () -> Void
+    let onClose: () -> Void
 
     @EnvironmentObject private var core: Core
-    @Environment(\.dismiss) private var dismiss
 
     private let qualities = [720, 1080, 1440, 2160]
     private let rates: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
     var body: some View {
-        SheetFrame {
+        SheetFrame(onClose: onClose) {
             HStack {
-                Button { dismiss() } label: { Image(systemName: "xmark").font(.system(size: 20, weight: .semibold)) }
+                Text("Settings").font(.system(size: 22, weight: .bold))
                 Spacer()
+                Button { onClose() } label: { Image(systemName: "xmark").font(.system(size: 18, weight: .semibold)) }
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 20)
@@ -263,14 +260,14 @@ struct SettingsSheet: View {
 
 struct SubtitlesSheet: View {
     @ObservedObject var model: PlayerModel
-    @Environment(\.dismiss) private var dismiss
+    let onClose: () -> Void
 
     var body: some View {
-        SheetFrame {
+        SheetFrame(onClose: onClose) {
             HStack(spacing: 14) {
-                Text("Subtitles").font(.system(size: 26, weight: .bold))
+                Text("Subtitles").font(.system(size: 22, weight: .bold))
                 Spacer()
-                Button { dismiss() } label: { Image(systemName: "xmark").font(.system(size: 20, weight: .semibold)) }
+                Button { onClose() } label: { Image(systemName: "xmark").font(.system(size: 18, weight: .semibold)) }
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 20)
