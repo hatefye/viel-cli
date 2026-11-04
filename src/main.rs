@@ -28,8 +28,13 @@ fn item_row(item: &Item) -> Row {
             } else {
                 format!("{}{}", t.kind, year)
             };
+            let label = if t.seasons.len() > 1 {
+                format!("{}{} · {} seasons · {}", t.name, year, t.seasons.len(), t.kind)
+            } else {
+                format!("{}{} · {}", t.name, year, t.kind)
+            };
             Row {
-                label: format!("{}{} · {}", t.name, year, t.kind),
+                label,
                 title: t.name.clone(),
                 meta,
                 body: t.overview.clone().unwrap_or_default(),
@@ -128,6 +133,7 @@ fn main() {
 
 fn app() -> Result<()> {
     ui::theme();
+    screen::init_images();
     let mut cfg = Config::load()?;
     ensure_player(&mut cfg);
     viel::relay::set_max_height(cfg.max_height);
@@ -189,7 +195,7 @@ fn home_search(api: &Api, signed_in: bool, trending: Arc<Mutex<Option<Vec<Title>
         }
         let (media, anime) = std::thread::scope(|s| {
             let a = s.spawn(|| api.search(q).unwrap_or_default());
-            let b = s.spawn(|| api.anime_search(q).unwrap_or_default());
+            let b = s.spawn(|| api.anime_search_merged(q));
             (a.join().unwrap_or_default(), b.join().unwrap_or_default())
         });
         let mut rows: Vec<Item> = anime.into_iter().take(6).map(Item::Title).collect();
@@ -221,6 +227,7 @@ fn open(api: &Api, cfg: &Config, logged_in: bool, item: Item, download: bool) ->
         Item::Title(t) => match t.kind {
             Kind::Movie if download => download::run_jobs(api, cfg, vec![download::movie_job(&t)]),
             Kind::Movie => play_movie(api, cfg, logged_in, &t, None).map(|_| ()),
+            Kind::Anime if t.seasons.len() > 1 => seasons(api, cfg, logged_in, &t),
             _ => episodes(api, cfg, logged_in, &t, None),
         },
         Item::Resume(r) => {
@@ -232,11 +239,39 @@ fn open(api: &Api, cfg: &Config, logged_in: bool, item: Item, download: bool) ->
                 rating: 0.0,
                 overview: None,
                 poster_path: r.poster.clone(),
+                seasons: Vec::new(),
             };
             match r.kind {
                 Kind::Movie => play_movie(api, cfg, true, &title, r.resume_at()).map(|_| ()),
                 _ => episodes(api, cfg, true, &title, Some((r.season, r.episode, r.resume_at()))),
             }
+        }
+    }
+}
+
+fn season_row(t: &Title) -> Row {
+    let year = if t.year.is_empty() { String::new() } else { format!(" ({})", t.year) };
+    Row {
+        label: format!("{}{} · {}", t.name, year, t.overview.clone().unwrap_or_default()),
+        title: t.name.clone(),
+        meta: format!("anime{year}"),
+        body: t.overview.clone().unwrap_or_default(),
+        poster: t.poster_path.clone(),
+    }
+}
+
+fn seasons(api: &Api, cfg: &Config, logged_in: bool, title: &Title) -> Result<()> {
+    let list: Vec<Title> = title.seasons.iter().cloned().map(|s| s.into_title(title.poster_path.clone())).collect();
+    let mut cursor = 0;
+    loop {
+        let mut sc = Screen::new(&title.name, "⏎ open season · esc back", list.clone(), season_row);
+        sc.cursor = cursor;
+        match screen::run(api, &mut sc)? {
+            Out::Pick(i) => {
+                cursor = i;
+                episodes(api, cfg, logged_in, &list[i], None)?;
+            }
+            _ => return Ok(()),
         }
     }
 }

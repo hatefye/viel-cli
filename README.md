@@ -28,7 +28,13 @@ viel
 
 Start typing. Results update as you type, anime first, then movies and TV.
 Before you type anything the list shows what you were watching and what's
-trending.
+trending. An anime with several seasons shows up once, as
+`Attack on Titan (2013) · 7 seasons · anime`, and opens a season picker.
+
+Posters render as real images in terminals that support it (Windows Terminal
+1.22+, kitty, WezTerm, iTerm2, Ghostty, foot, Konsole) and as colour blocks
+everywhere else. `VIEL_IMAGES=off` forces the blocks, `VIEL_IMAGES=sixel`
+(or `kitty`, `iterm2`) forces a protocol if detection gets it wrong.
 
 | key | home | episodes |
 |---|---|---|

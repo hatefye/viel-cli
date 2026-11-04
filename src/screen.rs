@@ -1,14 +1,16 @@
 use crate::api::Api;
 use anyhow::Result;
-use image::imageops::FilterType;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
-use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
+use ratatui::layout::{Constraint, Layout, Rect, Size};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui_image::picker::{Picker, ProtocolType};
+use ratatui_image::protocol::Protocol;
+use ratatui_image::{Image, Resize};
 use std::collections::{HashMap, HashSet};
 use std::io::{stdout, Stdout};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -71,10 +73,49 @@ impl Tui {
     fn enter() -> Result<Self> {
         enable_raw_mode()?;
         execute!(stdout(), EnterAlternateScreen)?;
-        let mut term = Terminal::new(CrosstermBackend::new(stdout()))?;
-        term.clear()?;
-        Ok(Self(term))
+        execute!(stdout(), Clear(ClearType::All))?;
+        Ok(Self(Terminal::new(CrosstermBackend::new(stdout()))?))
     }
+}
+
+pub fn init_images() {
+    picker();
+}
+
+fn picker() -> &'static Picker {
+    static PICKER: std::sync::OnceLock<Picker> = std::sync::OnceLock::new();
+    PICKER.get_or_init(|| {
+        use std::io::IsTerminal;
+        let forced = std::env::var("VIEL_IMAGES").unwrap_or_default().to_lowercase();
+        let tty = std::io::stdin().is_terminal() && stdout().is_terminal();
+        let mut picker = match forced.as_str() {
+            "halfblocks" | "off" | "0" => Picker::halfblocks(),
+            _ if !tty || (forced.is_empty() && !graphics_terminal()) => Picker::halfblocks(),
+            _ => Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks()),
+        };
+        match forced.as_str() {
+            "sixel" => picker.set_protocol_type(ProtocolType::Sixel),
+            "kitty" => picker.set_protocol_type(ProtocolType::Kitty),
+            "iterm2" => picker.set_protocol_type(ProtocolType::Iterm2),
+            _ => {}
+        }
+        picker
+    })
+}
+
+fn graphics_terminal() -> bool {
+    let var = |k: &str| std::env::var(k).unwrap_or_default();
+    if !var("WT_SESSION").is_empty() || !var("KITTY_WINDOW_ID").is_empty() || !var("KONSOLE_VERSION").is_empty() || !var("WEZTERM_EXECUTABLE").is_empty() {
+        return true;
+    }
+    let program = var("TERM_PROGRAM").to_lowercase();
+    let term = var("TERM").to_lowercase();
+    ["wezterm", "iterm", "ghostty", "mintty", "rio", "warpterminal", "tabby", "contour"].iter().any(|p| program.contains(p))
+        || ["kitty", "ghostty", "foot", "contour", "mlterm", "st-"].iter().any(|t| term.contains(t))
+}
+
+pub fn image_protocol() -> String {
+    format!("{:?}", picker().protocol_type()).to_lowercase()
 }
 
 impl Drop for Tui {
@@ -85,39 +126,63 @@ impl Drop for Tui {
     }
 }
 
+type Key = (String, u16, u16);
+type ByteCache = HashMap<String, Option<Arc<Vec<u8>>>>;
+
 struct Posters {
-    cache: HashMap<String, Option<Vec<u8>>>,
-    loading: HashSet<String>,
-    tx: Sender<(String, Option<Vec<u8>>)>,
-    rx: Receiver<(String, Option<Vec<u8>>)>,
+    bytes: Arc<std::sync::Mutex<ByteCache>>,
+    ready: HashMap<Key, Option<(Protocol, Size)>>,
+    loading: HashSet<Key>,
+    tx: Sender<(Key, Option<(Protocol, Size)>)>,
+    rx: Receiver<(Key, Option<(Protocol, Size)>)>,
 }
 
 impl Posters {
     fn new() -> Self {
         let (tx, rx) = channel();
-        Self { cache: HashMap::new(), loading: HashSet::new(), tx, rx }
+        Self { bytes: Arc::default(), ready: HashMap::new(), loading: HashSet::new(), tx, rx }
     }
 
-    fn want(&mut self, api: &Api, path: &str) {
-        if self.cache.contains_key(path) || self.loading.contains(path) {
+    fn want(&mut self, api: &Api, path: &str, size: Size) {
+        let key = (path.to_string(), size.width, size.height);
+        if self.ready.contains_key(&key) || self.loading.contains(&key) || size.width == 0 || size.height == 0 {
             return;
         }
-        self.loading.insert(path.to_string());
+        self.loading.insert(key.clone());
         let api = api.clone();
         let tx = self.tx.clone();
+        let bytes = self.bytes.clone();
         let path = path.to_string();
         thread::spawn(move || {
-            let bytes = api.poster(&path);
-            let _ = tx.send((path, bytes));
+            let cached = bytes.lock().unwrap().get(&path).cloned();
+            let data = match cached {
+                Some(d) => d,
+                None => {
+                    let fetched = api.poster(&path).map(Arc::new);
+                    bytes.lock().unwrap().insert(path.clone(), fetched.clone());
+                    fetched
+                }
+            };
+            let resize = Resize::Fit(Some(image::imageops::FilterType::Lanczos3));
+            let proto = data.and_then(|d| image::load_from_memory(&d).ok()).and_then(|img| {
+                let cells = resize.size_for(&img, picker().font_size(), size);
+                picker().new_protocol(img, size, resize).ok().map(|p| (p, cells))
+            });
+            let _ = tx.send((key, proto));
         });
     }
 
     fn pump(&mut self) {
-        while let Ok((path, bytes)) = self.rx.try_recv() {
-            self.loading.remove(&path);
-            self.cache.insert(path, bytes);
+        while let Ok((key, proto)) = self.rx.try_recv() {
+            self.loading.remove(&key);
+            self.ready.insert(key, proto);
         }
     }
+}
+
+fn poster_area(area: Rect) -> Rect {
+    let h = ((area.width as u32 * 3 / 4) as u16).min(area.height.saturating_sub(5));
+    Rect::new(area.x, area.y, area.width, h)
 }
 
 pub fn run<T: Send + 'static>(api: &Api, screen: &mut Screen<T>) -> Result<Out> {
@@ -154,9 +219,15 @@ pub fn run<T: Send + 'static>(api: &Api, screen: &mut Screen<T>) -> Result<Out> 
         }
         if !screen.items.is_empty() {
             screen.cursor = screen.cursor.min(screen.items.len() - 1);
+            let size = {
+                let area = tui.0.size()?;
+                let cols = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(Rect::new(0, 0, area.width, area.height.saturating_sub(1)));
+                let inner = Block::default().borders(Borders::ALL).inner(cols[1]);
+                poster_area(inner).as_size()
+            };
             for i in screen.cursor.saturating_sub(1)..(screen.cursor + 3).min(screen.items.len()) {
                 if let Some(p) = (screen.row)(&screen.items[i]).poster {
-                    posters.want(api, &p);
+                    posters.want(api, &p, size);
                 }
             }
         }
@@ -274,10 +345,12 @@ fn draw<T>(f: &mut ratatui::Frame, screen: &Screen<T>, state: &mut ListState, po
 }
 
 fn detail(f: &mut ratatui::Frame, area: Rect, row: &Row, posters: &Posters) {
-    let poster_h = ((area.width as u32 * 3 / 4) as u16).min(area.height.saturating_sub(5));
-    let panes = Layout::vertical([Constraint::Length(poster_h), Constraint::Min(0)]).split(area);
-    if let Some(Some(bytes)) = row.poster.as_ref().and_then(|p| posters.cache.get(p)) {
-        f.render_widget(Paragraph::new(poster_lines(bytes, area.width, poster_h)), panes[0]);
+    let top = poster_area(area);
+    let panes = Layout::vertical([Constraint::Length(top.height), Constraint::Min(0)]).split(area);
+    if let Some(Some((proto, cells))) = row.poster.as_ref().and_then(|p| posters.ready.get(&(p.clone(), top.width, top.height))) {
+        let w = cells.width.min(top.width);
+        let x = top.x + (top.width - w) / 2;
+        f.render_widget(Image::new(proto), Rect::new(x, top.y, w, cells.height.min(top.height)));
     }
     let text = vec![
         Line::from(""),
@@ -322,47 +395,4 @@ pub fn countdown(label: &str, seconds: u64) -> Result<bool> {
             }
         }
     }
-}
-
-fn poster_lines(bytes: &[u8], max_w: u16, max_h: u16) -> Vec<Line<'static>> {
-    if max_w == 0 || max_h == 0 {
-        return Vec::new();
-    }
-    let img = match image::load_from_memory(bytes) {
-        Ok(i) => i.to_rgb8(),
-        Err(_) => return Vec::new(),
-    };
-    let (iw, ih) = img.dimensions();
-    if iw == 0 || ih == 0 {
-        return Vec::new();
-    }
-    let target_w = max_w as u32;
-    let target_h = max_h as u32 * 2;
-    let scale = (target_w as f32 / iw as f32).min(target_h as f32 / ih as f32);
-    let nw = ((iw as f32 * scale) as u32).max(1);
-    let nh = ((ih as f32 * scale) as u32).max(2);
-    let resized = image::imageops::resize(&img, nw, nh, FilterType::Lanczos3);
-    let pad = (target_w.saturating_sub(nw) / 2) as usize;
-
-    let mut lines = Vec::new();
-    let mut y = 0;
-    while y + 1 < nh {
-        let mut spans = Vec::new();
-        if pad > 0 {
-            spans.push(Span::raw(" ".repeat(pad)));
-        }
-        for x in 0..nw {
-            let top = resized.get_pixel(x, y);
-            let bottom = resized.get_pixel(x, y + 1);
-            spans.push(Span::styled(
-                "▀",
-                Style::default()
-                    .fg(Color::Rgb(top[0], top[1], top[2]))
-                    .bg(Color::Rgb(bottom[0], bottom[1], bottom[2])),
-            ));
-        }
-        lines.push(Line::from(spans));
-        y += 2;
-    }
-    lines
 }

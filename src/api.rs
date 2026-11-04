@@ -44,6 +44,69 @@ pub struct Title {
     pub rating: f64,
     pub overview: Option<String>,
     pub poster_path: Option<String>,
+    pub seasons: Vec<AnimeSeason>,
+}
+
+#[derive(Clone, Deserialize)]
+pub struct AnimeSeason {
+    #[serde(deserialize_with = "num")]
+    pub id: u64,
+    #[serde(default, deserialize_with = "num")]
+    pub season: u64,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default, deserialize_with = "num")]
+    pub episodes: u64,
+    #[serde(default, deserialize_with = "text")]
+    pub year: String,
+    pub cover: Option<String>,
+}
+
+fn text<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        N(u64),
+        S(String),
+        Nil(()),
+    }
+    Ok(match Raw::deserialize(d)? {
+        Raw::N(n) => n.to_string(),
+        Raw::S(s) => s,
+        Raw::Nil(()) => String::new(),
+    })
+}
+
+pub fn plural(n: u64, word: &str) -> String {
+    if n == 1 { format!("1 {word}") } else { format!("{n} {word}s") }
+}
+
+fn num<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        N(u64),
+        S(String),
+    }
+    Ok(match Raw::deserialize(d)? {
+        Raw::N(n) => n,
+        Raw::S(s) => s.trim().parse().unwrap_or(0),
+    })
+}
+
+impl AnimeSeason {
+    pub fn into_title(self, poster: Option<String>) -> Title {
+        Title {
+            id: self.id,
+            kind: Kind::Anime,
+            name: self.title.clone(),
+            year: self.year.clone(),
+            rating: 0.0,
+            overview: Some(plural(self.episodes, "episode")),
+            poster_path: self.cover.or(poster),
+            seasons: Vec::new(),
+        }
+    }
 }
 
 impl fmt::Display for Title {
@@ -251,7 +314,7 @@ impl Api {
         } else if poster_path.starts_with("http") {
             self.client.get(format!("{}/proxy/image", self.host)).query(&[("url", poster_path)]).send().ok()?
         } else {
-            let src = format!("https://image.tmdb.org/t/p/w342{poster_path}");
+            let src = format!("https://image.tmdb.org/t/p/w500{poster_path}");
             self.client.get(format!("{}/proxy/image", self.host)).query(&[("url", &src)]).send().ok()?
         };
         if !resp.status().is_success() {
@@ -264,6 +327,51 @@ impl Api {
         let url = format!("{}/miruro/search", self.host);
         let resp: AnimeSearchResp = self.client.get(url).query(&[("query", query)]).send()?.json()?;
         Ok(resp.results.into_iter().map(AnimeItem::into_title).collect())
+    }
+
+    pub fn anime_chain(&self, anilist_id: u64) -> Vec<AnimeSeason> {
+        let url = format!("{}/miruro/seasons/{}", self.host, anilist_id);
+        self.client
+            .get(url)
+            .timeout(Duration::from_secs(15))
+            .send()
+            .ok()
+            .and_then(|r| r.json::<ChainResp>().ok())
+            .map(|r| r.seasons)
+            .unwrap_or_default()
+    }
+
+    pub fn anime_search_merged(&self, query: &str) -> Vec<Title> {
+        let found = self.anime_search(query).unwrap_or_default();
+        let chains: Vec<Vec<AnimeSeason>> = std::thread::scope(|s| {
+            let jobs: Vec<_> = found.iter().map(|t| s.spawn(move || self.anime_chain(t.id))).collect();
+            jobs.into_iter().map(|j| j.join().unwrap_or_default()).collect()
+        });
+        let mut out: Vec<Title> = Vec::new();
+        let mut seen = HashSet::new();
+        for (title, chain) in found.into_iter().zip(chains) {
+            let root = chain.first().map(|c| c.id).unwrap_or(title.id);
+            if !seen.insert(root) {
+                continue;
+            }
+            if chain.len() < 2 {
+                out.push(title);
+                continue;
+            }
+            let first = &chain[0];
+            let total: u64 = chain.iter().map(|c| c.episodes).sum();
+            out.push(Title {
+                id: root,
+                kind: Kind::Anime,
+                name: first.title.clone(),
+                year: first.year.clone(),
+                rating: 0.0,
+                overview: Some(format!("{} · {}", plural(chain.len() as u64, "season"), plural(total, "episode"))),
+                poster_path: first.cover.clone().or(title.poster_path),
+                seasons: chain,
+            });
+        }
+        out
     }
 
     pub fn anime_providers(&self, anilist_id: u64, dub: bool) -> Result<Vec<AnimeProvider>> {
@@ -570,6 +678,7 @@ impl SearchItem {
             rating: self.vote_average.unwrap_or(0.0),
             overview: self.overview.filter(|s| !s.is_empty()),
             poster_path: self.poster_path.filter(|s| !s.is_empty()),
+            seasons: Vec::new(),
         })
     }
 }
@@ -691,6 +800,12 @@ pub fn episode_sources(providers: &[AnimeProvider], number: f64) -> Vec<(String,
 }
 
 #[derive(Deserialize)]
+struct ChainResp {
+    #[serde(default)]
+    seasons: Vec<AnimeSeason>,
+}
+
+#[derive(Deserialize)]
 struct AnimeSearchResp {
     results: Vec<AnimeItem>,
 }
@@ -736,6 +851,7 @@ impl AnimeItem {
             rating: 0.0,
             overview: self.episodes.map(|e| format!("{e} episodes")),
             poster_path: poster,
+            seasons: Vec::new(),
         }
     }
 }
