@@ -40,7 +40,7 @@ enum Orientation {
     static func request(_ mask: UIInterfaceOrientationMask) {
         AppDelegate.orientation = mask == .portrait ? .allButUpsideDown : mask
         guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
-        scene.requestGeometryUpdate(.iPhone(interfaceOrientations: mask))
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
         scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
     }
 }
