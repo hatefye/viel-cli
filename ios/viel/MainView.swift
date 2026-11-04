@@ -18,6 +18,11 @@ struct MainView: View {
                     ListView(page: ListPage(title: "Shows", path: "tv/popular"))
                 }
             }
+            Tab("Anime", systemImage: "sparkles") {
+                NavigationStack {
+                    ListView(page: ListPage(title: "Anime", path: "anime/trending"))
+                }
+            }
             Tab("My List", systemImage: "star") {
                 MyListView()
             }

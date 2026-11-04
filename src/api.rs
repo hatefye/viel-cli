@@ -470,8 +470,12 @@ impl Api {
     }
 
     pub fn anime_trending(&self) -> Result<Vec<Title>> {
+        self.anime_trending_page(1)
+    }
+
+    pub fn anime_trending_page(&self, page: u32) -> Result<Vec<Title>> {
         let url = format!("{}/miruro/trending", self.host);
-        let resp: AnimeSearchResp = self.client.get(url).send()?.json()?;
+        let resp: AnimeSearchResp = self.client.get(url).query(&[("page", page.to_string())]).send()?.json()?;
         Ok(resp.results.into_iter().map(AnimeItem::into_title).collect())
     }
 

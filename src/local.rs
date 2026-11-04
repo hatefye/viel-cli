@@ -155,6 +155,11 @@ fn route(method: &str, path: &str, query: &HashMap<String, String>, body: &[u8])
     let value = match (method, path) {
         ("GET", "home") => home(&api, &host),
         ("GET", "search") => search(&api, &host, &q("q")),
+        ("GET", "list") if q("path").starts_with("anime") => {
+            let page: u32 = q("page").parse().unwrap_or(1);
+            let rows: Vec<TitleOut> = api.anime_trending_page(page)?.into_iter().map(|t| title_out(&host, t)).collect();
+            json!(rows)
+        }
         ("GET", "list") => {
             let page = q("page");
             let mut path = q("path");
