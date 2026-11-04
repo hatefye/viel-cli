@@ -37,9 +37,9 @@ everywhere else. `VIEL_IMAGES=off` forces the blocks, `VIEL_IMAGES=sixel`
 (or `kitty`, `iterm2`) forces a protocol if detection gets it wrong.
 
 Windows Terminal never reports its cell size, so posters there are sized for
-an 8x16 pixel cell and come out a little small on large fonts or high DPI.
-Set `image cell size` in settings (or `VIEL_CELL=9x20`) to your real cell
-size to fill the space. `viel --probe` prints what was detected.
+the default 12pt Cascadia Mono at your display scale. With a different font
+size, set `image cell size` in settings (or `VIEL_CELL=9x20`) to your real
+cell size. `viel --probe` prints what was detected.
 
 | key | home | episodes |
 |---|---|---|

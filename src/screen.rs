@@ -93,7 +93,7 @@ fn picker() -> &'static Picker {
         use std::io::IsTerminal;
         let forced = std::env::var("VIEL_IMAGES").unwrap_or_default().to_lowercase();
         let tty = std::io::stdin().is_terminal() && stdout().is_terminal();
-        let wt = cfg!(windows) && !std::env::var("WT_SESSION").unwrap_or_default().is_empty();
+        let wt = cfg!(windows) && (!std::env::var("WT_SESSION").unwrap_or_default().is_empty() || console::pseudo());
         let mut note = String::new();
         let mut probe = || match Picker::from_query_stdio() {
             Ok(p) => {
@@ -117,15 +117,15 @@ fn picker() -> &'static Picker {
                 p
             }
             _ if !tty => Picker::halfblocks(),
-            _ if !graphics_terminal() => {
-                note = "terminal not known to draw images".into();
-                Picker::halfblocks()
-            }
             _ if wt => {
-                note = "windows terminal, cell size assumed".into();
+                note = "windows terminal, cell size from display scale".into();
                 let mut p = Picker::from_fontsize(cell_guess());
                 p.set_protocol_type(ProtocolType::Sixel);
                 p
+            }
+            _ if !graphics_terminal() => {
+                note = "terminal not known to draw images".into();
+                Picker::halfblocks()
             }
             _ if cfg!(windows) => {
                 note = "not windows terminal".into();
@@ -165,7 +165,64 @@ fn cell_guess() -> FontSize {
         let (w, h) = v.split_once('x')?;
         Some(FontSize::new(w.trim().parse().ok()?, h.trim().parse().ok()?))
     });
-    custom.unwrap_or_else(|| FontSize::new(8, 16))
+    custom.unwrap_or_else(|| {
+        let scale = console::scale();
+        FontSize::new((9.0 * scale) as u16, (16.0 * scale) as u16)
+    })
+}
+
+#[cfg(windows)]
+mod console {
+    use std::ffi::c_void;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetConsoleWindow() -> *mut c_void;
+    }
+    #[link(name = "user32")]
+    extern "system" {
+        fn IsWindowVisible(hwnd: *mut c_void) -> i32;
+        fn SetProcessDPIAware() -> i32;
+        fn GetDC(hwnd: *mut c_void) -> *mut c_void;
+        fn ReleaseDC(hwnd: *mut c_void, hdc: *mut c_void) -> i32;
+    }
+    #[link(name = "gdi32")]
+    extern "system" {
+        fn GetDeviceCaps(hdc: *mut c_void, index: i32) -> i32;
+    }
+
+    const LOGPIXELSY: i32 = 90;
+
+    pub fn pseudo() -> bool {
+        unsafe {
+            let window = GetConsoleWindow();
+            !window.is_null() && IsWindowVisible(window) == 0
+        }
+    }
+
+    pub fn scale() -> f32 {
+        unsafe {
+            SetProcessDPIAware();
+            let hdc = GetDC(std::ptr::null_mut());
+            if hdc.is_null() {
+                return 1.0;
+            }
+            let dpi = GetDeviceCaps(hdc, LOGPIXELSY);
+            ReleaseDC(std::ptr::null_mut(), hdc);
+            if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod console {
+    pub fn pseudo() -> bool {
+        false
+    }
+
+    pub fn scale() -> f32 {
+        1.0
+    }
 }
 
 fn graphics_terminal() -> bool {
