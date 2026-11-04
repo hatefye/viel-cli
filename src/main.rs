@@ -242,16 +242,7 @@ fn open(api: &Api, cfg: &Config, logged_in: bool, item: Item, download: bool) ->
             _ => episodes(api, cfg, logged_in, &t, None),
         },
         Item::Resume(r) => {
-            let title = Title {
-                id: r.id,
-                kind: r.kind,
-                name: r.show.clone(),
-                year: String::new(),
-                rating: 0.0,
-                overview: None,
-                poster_path: r.poster.clone(),
-                seasons: Vec::new(),
-            };
+            let title = Title::bare(r.id, r.kind, r.show.clone(), r.poster.clone());
             match r.kind {
                 Kind::Movie => play_movie(api, cfg, true, &title, r.resume_at()).map(|_| ()),
                 _ => episodes(api, cfg, true, &title, Some((r.season, r.episode, r.resume_at()))),

@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 struct Settings: Codable {
     var host = "https://viel.tv"
@@ -26,21 +27,35 @@ struct ApiError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+struct Ok: Decodable {
+    let ok: Bool
+}
+
 @MainActor
 final class Core: ObservableObject {
     static let shared = Core()
 
     let port: UInt16
+    let device: String
+    let build: String
     @Published var username: String?
     @Published var settings: Settings {
         didSet { settings.save() }
     }
+
+    private var lines: [LogLine] = []
+    private var flushTask: Task<Void, Never>?
 
     private init() {
         let settings = Settings.load()
         self.settings = settings
         let token = UserDefaults.standard.string(forKey: "token") ?? ""
         port = viel_start(settings.host, token)
+        let stored = UserDefaults.standard.string(forKey: "device") ?? String(UUID().uuidString.prefix(8)).lowercased()
+        UserDefaults.standard.set(stored, forKey: "device")
+        device = stored
+        build = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0"
+        log("app", "start \(UIDevice.current.systemName) \(UIDevice.current.systemVersion) \(UIDevice.current.model) build \(build) port \(port)")
         Task {
             await pushSettings()
             await refreshUser()
@@ -85,6 +100,7 @@ final class Core: ObservableObject {
         let reply: Reply = try await post(register ? "register" : "login", ["username": username, "password": password])
         UserDefaults.standard.set(reply.token, forKey: "token")
         self.username = reply.username
+        log("app", "signed in")
     }
 
     func logout() async {
@@ -113,8 +129,29 @@ final class Core: ObservableObject {
         guard username != nil else { return }
         let _: Ok? = try? await post("progress", progress)
     }
-}
 
-struct Ok: Decodable {
-    let ok: Bool
+    nonisolated func log(_ tag: String, _ message: String) {
+        Task { @MainActor in
+            self.append(tag, message)
+        }
+    }
+
+    private func append(_ tag: String, _ message: String) {
+        print("[\(tag)] \(message)")
+        lines.append(LogLine(t: UInt64(Date().timeIntervalSince1970 * 1000), tag: tag, msg: message))
+        if flushTask == nil {
+            flushTask = Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                await flushLogs()
+            }
+        }
+    }
+
+    func flushLogs() async {
+        flushTask = nil
+        guard !lines.isEmpty else { return }
+        let batch = LogBatch(device: device, build: build, lines: lines)
+        lines = []
+        let _: Ok? = try? await post("log", batch)
+    }
 }

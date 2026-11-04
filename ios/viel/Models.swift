@@ -1,6 +1,6 @@
 import Foundation
 
-struct Title: Codable, Hashable {
+struct Title: Codable, Hashable, Identifiable {
     let id: UInt64
     let kind: String
     let name: String
@@ -8,16 +8,28 @@ struct Title: Codable, Hashable {
     let rating: Double
     let overview: String?
     let poster: String?
+    let backdrop: String?
+    let genres: [String]
     let seasons: [Season]
 
     var key: String { "\(kind)-\(id)" }
+    var isMovie: Bool { kind == "movie" }
+    var isAnime: Bool { kind == "anime" }
 
-    var subtitle: String {
-        var parts: [String] = []
-        if !year.isEmpty { parts.append(year) }
-        parts.append(kind)
-        if rating > 0 { parts.append(String(format: "★ %.1f", rating)) }
-        return parts.joined(separator: " · ")
+    var kindLabel: String {
+        switch kind {
+        case "tv": return "TV Show"
+        case "anime": return "Anime"
+        default: return "Movie"
+        }
+    }
+
+    var ratingText: String? {
+        rating > 0 ? String(format: "★ %.1f", rating) : nil
+    }
+
+    static func bare(id: UInt64, kind: String, name: String, poster: String?) -> Title {
+        Title(id: id, kind: kind, name: name, year: "", rating: 0, overview: nil, poster: poster, backdrop: nil, genres: [], seasons: [])
     }
 }
 
@@ -30,17 +42,51 @@ struct Season: Codable, Hashable {
     let poster: String?
 }
 
-struct Home: Decodable {
-    let resume: [Resume]
-    let trending: [Title]
+struct Details: Decodable {
+    let id: UInt64
+    let kind: String
+    let name: String
+    let year: String
+    let rating: Double
+    let overview: String?
+    let poster: String?
+    let backdrop: String?
+    let genres: [String]
+    let seasons: [Season]
+    let logo: String?
+    let runtime: Int?
+    let tagline: String
+    let cast: [String]
+    let seasonCount: Int
 
     enum CodingKeys: String, CodingKey {
-        case resume = "continue"
-        case trending
+        case id, kind, name, year, rating, overview, poster, backdrop, genres, seasons, logo, runtime, tagline, cast
+        case seasonCount = "season_count"
+    }
+
+    var title: Title {
+        Title(id: id, kind: kind, name: name, year: year, rating: rating, overview: overview, poster: poster, backdrop: backdrop, genres: genres, seasons: seasons)
     }
 }
 
-struct Resume: Decodable, Hashable {
+struct HomeData: Decodable {
+    let hero: Details?
+    let resume: [Resume]
+    let top: [Title]
+    let trending: [Title]
+    let topRated: [Title]
+    let popularTv: [Title]
+    let anime: [Title]
+
+    enum CodingKeys: String, CodingKey {
+        case hero, top, trending, anime
+        case resume = "continue"
+        case topRated = "top_rated"
+        case popularTv = "popular_tv"
+    }
+}
+
+struct Resume: Decodable, Hashable, Identifiable {
     let id: UInt64
     let kind: String
     let show: String
@@ -57,18 +103,21 @@ struct Resume: Decodable, Hashable {
     }
 
     var key: String { "\(kind)-\(id)-\(season)-\(episode)" }
+    var title: Title { Title.bare(id: id, kind: kind, name: show, poster: poster) }
+    var fraction: Double { duration > 0 ? min(max(position / duration, 0), 1) : 0 }
 
-    var title: Title {
-        Title(id: id, kind: kind, name: show, year: "", rating: 0, overview: nil, poster: poster, seasons: [])
+    var episodeLabel: String? {
+        switch kind {
+        case "tv": return "S\(season) · E\(episode)"
+        case "anime": return "Episode \(episode)"
+        default: return nil
+        }
     }
 
     var label: String {
-        let left = Clock.short(max(duration - position, 0))
-        switch kind {
-        case "tv": return "S\(season)E\(episode) · \(left) left"
-        case "anime": return "E\(episode) · \(left) left"
-        default: return "\(left) left"
-        }
+        let left = Format.clock(max(duration - position, 0))
+        if let episodeLabel { return "\(episodeLabel) · \(left) left" }
+        return "\(left) left"
     }
 }
 
@@ -83,6 +132,7 @@ struct Episode: Decodable, Hashable {
     let name: String
     let overview: String
     let still: String?
+    let runtime: Int?
     let sources: [Source]
 
     var key: String { "\(season)-\(number)" }
@@ -92,8 +142,12 @@ struct Episode: Decodable, Hashable {
     }
 
     func label(anime: Bool) -> String {
-        let tag = anime ? "E\(numberText)" : String(format: "S%02dE%02d", season, Int(number))
+        let tag = anime ? "E\(numberText)" : String(format: "S%d · E%d", season, Int(number))
         return name.isEmpty ? tag : "\(tag) · \(name)"
+    }
+
+    var displayName: String {
+        name.isEmpty ? "Episode \(numberText)" : name
     }
 }
 
@@ -122,11 +176,34 @@ struct Stream: Decodable, Hashable {
     let hls: Bool
     let subs: [Sub]
     let intro: [Double]?
+
+    var label: String {
+        switch source {
+        case "cno": return "Cno"
+        case "mapple": return "Mapple"
+        case "vixsrc": return "VixSrc"
+        case "vidbolt": return "VidBolt"
+        case "vidrock": return "VidRock"
+        case "animeparadise": return "AnimeParadise"
+        case "animekai": return "AnimeKai"
+        case "kototv": return "KotoTV"
+        case "luffy": return "LuffyTV"
+        default: return source.capitalized
+        }
+    }
 }
 
 struct Sub: Decodable, Hashable {
     let lang: String
     let url: String
+
+    var label: String {
+        let code = lang.lowercased()
+        let names = ["en": "English", "es": "Spanish", "fr": "French", "de": "German", "pt": "Portuguese", "it": "Italian", "ja": "Japanese", "ar": "Arabic", "ru": "Russian", "ko": "Korean", "zh": "Chinese", "tr": "Turkish", "pl": "Polish", "nl": "Dutch", "sv": "Swedish", "el": "Greek", "ro": "Romanian"]
+        if let name = names[code] { return name }
+        if let name = names[String(code.prefix(2))], code.count <= 5 { return name }
+        return lang.isEmpty ? "Subtitle" : lang.capitalized
+    }
 }
 
 struct Progress: Encodable {
@@ -139,16 +216,29 @@ struct Progress: Encodable {
     let title: String
 }
 
+struct LogLine: Encodable {
+    let t: UInt64
+    let tag: String
+    let msg: String
+}
+
+struct LogBatch: Encodable {
+    let device: String
+    let build: String
+    let lines: [LogLine]
+}
+
 struct Playable: Hashable, Identifiable {
     let title: Title
     let episodes: [Episode]
     let index: Int
     let dub: Bool
     let startAt: Double?
+    let chain: [Season]
 
     var id: String { "\(title.key)-\(index)-\(dub)" }
-    var isMovie: Bool { title.kind == "movie" }
-    var isAnime: Bool { title.kind == "anime" }
+    var isMovie: Bool { title.isMovie }
+    var isAnime: Bool { title.isAnime }
     var episode: Episode? { episodes.indices.contains(index) ? episodes[index] : nil }
 
     var heading: String {
@@ -156,9 +246,18 @@ struct Playable: Hashable, Identifiable {
         return "\(title.name) · \(episode.label(anime: isAnime))\(dub ? " (dub)" : "")"
     }
 
+    var episodeTag: String? {
+        guard let episode else { return nil }
+        return isAnime ? "E\(episode.numberText)" : "S\(episode.season) · E\(Int(episode.number))"
+    }
+
     var next: Playable? {
         guard !isMovie, episodes.indices.contains(index + 1) else { return nil }
-        return Playable(title: title, episodes: episodes, index: index + 1, dub: dub, startAt: nil)
+        return Playable(title: title, episodes: episodes, index: index + 1, dub: dub, startAt: nil, chain: chain)
+    }
+
+    func at(_ index: Int) -> Playable {
+        Playable(title: title, episodes: episodes, index: index, dub: dub, startAt: nil, chain: chain)
     }
 
     var request: PlayRequest {
@@ -187,9 +286,38 @@ struct Playable: Hashable, Identifiable {
     }
 }
 
-enum Clock {
-    static func short(_ seconds: Double) -> String {
+enum Format {
+    static func runtime(_ minutes: Int?) -> String? {
+        guard let minutes, minutes > 0 else { return nil }
+        return minutes >= 60 ? "\(minutes / 60)h \(minutes % 60)m" : "\(minutes)m"
+    }
+
+    static func clock(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "00:00" }
         let total = Int(seconds.rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
+        if total >= 3600 {
+            return String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
+        }
+        return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+}
+
+struct ListPage: Hashable, Identifiable {
+    let title: String
+    let path: String?
+    let items: [Title]
+
+    var id: String { title + (path ?? "") }
+
+    init(title: String, path: String) {
+        self.title = title
+        self.path = path
+        items = []
+    }
+
+    init(title: String, items: [Title]) {
+        self.title = title
+        path = nil
+        self.items = items
     }
 }

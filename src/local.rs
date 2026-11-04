@@ -1,11 +1,12 @@
-use crate::api::{self, Api, ContinueRow, ProgressUpdate, Stream, Title};
+use crate::api::{self, Api, ContinueRow, Details, Kind, ProgressUpdate, Stream, Title};
 use crate::relay;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 struct State {
     api: Api,
@@ -31,13 +32,43 @@ pub fn set_token(token: Option<String>) {
     s.api = Api::new(&s.host, token);
 }
 
+fn pending() -> &'static Mutex<Vec<Value>> {
+    static LINES: OnceLock<Mutex<Vec<Value>>> = OnceLock::new();
+    LINES.get_or_init(|| {
+        thread::spawn(|| loop {
+            thread::sleep(Duration::from_secs(5));
+            flush();
+        });
+        Mutex::new(Vec::new())
+    })
+}
+
+fn flush() {
+    let lines: Vec<Value> = std::mem::take(&mut *pending().lock().unwrap());
+    if lines.is_empty() {
+        return;
+    }
+    let api = state().read().unwrap().api.clone();
+    for chunk in lines.chunks(40) {
+        api.log_event(&json!({ "type": "app", "detail": { "lines": chunk }, "url": "app://ios" }));
+    }
+}
+
+pub fn log(tag: &str, message: impl Into<String>) {
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    pending().lock().unwrap().push(json!({ "t": now, "tag": tag, "msg": message.into() }));
+}
+
 type Reply = (&'static str, &'static str, Vec<u8>);
 
 pub fn handle(method: &str, path: &str, query: &HashMap<String, String>, body: &[u8]) -> Reply {
     match route(method, path, query, body) {
         Ok(Some(v)) => ("200 OK", "application/json", v.to_string().into_bytes()),
         Ok(None) => ("404 Not Found", "application/json", br#"{"error":"not found"}"#.to_vec()),
-        Err(e) => ("500 Internal Server Error", "application/json", json!({ "error": e.to_string() }).to_string().into_bytes()),
+        Err(e) => {
+            log("api", format!("{method} {path}: {e}"));
+            ("500 Internal Server Error", "application/json", json!({ "error": e.to_string() }).to_string().into_bytes())
+        }
     }
 }
 
@@ -50,6 +81,21 @@ fn route(method: &str, path: &str, query: &HashMap<String, String>, body: &[u8])
     let value = match (method, path) {
         ("GET", "home") => home(&api, &host),
         ("GET", "search") => search(&api, &host, &q("q")),
+        ("GET", "list") => {
+            let page = q("page");
+            let mut path = q("path");
+            if !page.is_empty() {
+                path.push(if path.contains('?') { '&' } else { '?' });
+                path.push_str("page=");
+                path.push_str(&page);
+            }
+            let rows: Vec<TitleOut> = api.list(&path)?.into_iter().map(|t| title_out(&host, t)).collect();
+            json!(rows)
+        }
+        ("GET", "details") => {
+            let kind = parse_kind(&q("kind"))?;
+            json!(details_out(&host, api.details(kind, q("id").parse().unwrap_or(0))?))
+        }
         ("GET", "title") => title(&api, &host, &q("kind"), q("id").parse().unwrap_or(0), q("dub") == "1")?,
         ("POST", "play") => play(&api, &lang, serde_json::from_slice(body)?)?,
         ("POST", "progress") => {
@@ -95,9 +141,26 @@ fn route(method: &str, path: &str, query: &HashMap<String, String>, body: &[u8])
             }
             json!({ "ok": true })
         }
+        ("POST", "log") => {
+            let batch: LogBatch = serde_json::from_slice(body)?;
+            let mut lines = pending().lock().unwrap();
+            for line in batch.lines {
+                lines.push(json!({ "t": line.t, "tag": line.tag, "msg": line.msg, "device": batch.device, "build": batch.build }));
+            }
+            json!({ "ok": true })
+        }
         _ => return Ok(None),
     };
     Ok(Some(value))
+}
+
+fn parse_kind(kind: &str) -> Result<Kind> {
+    Ok(match kind {
+        "movie" => Kind::Movie,
+        "tv" => Kind::Tv,
+        "anime" => Kind::Anime,
+        other => bail!("unknown kind {other}"),
+    })
 }
 
 #[derive(Serialize)]
@@ -109,6 +172,8 @@ struct TitleOut {
     rating: f64,
     overview: Option<String>,
     poster: Option<String>,
+    backdrop: Option<String>,
+    genres: Vec<String>,
     seasons: Vec<SeasonOut>,
 }
 
@@ -120,6 +185,17 @@ struct SeasonOut {
     episodes: u64,
     year: String,
     poster: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DetailsOut {
+    #[serde(flatten)]
+    title: TitleOut,
+    logo: Option<String>,
+    runtime: Option<u32>,
+    tagline: String,
+    cast: Vec<String>,
+    season_count: u32,
 }
 
 #[derive(Serialize)]
@@ -142,6 +218,7 @@ struct EpisodeOut {
     name: String,
     overview: String,
     still: Option<String>,
+    runtime: Option<u32>,
     sources: Vec<Source>,
 }
 
@@ -208,14 +285,38 @@ struct Settings {
     subtitle_lang: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct LogBatch {
+    #[serde(default)]
+    device: String,
+    #[serde(default)]
+    build: String,
+    #[serde(default)]
+    lines: Vec<LogLine>,
+}
+
+#[derive(Deserialize)]
+struct LogLine {
+    #[serde(default)]
+    t: u64,
+    #[serde(default)]
+    tag: String,
+    #[serde(default)]
+    msg: String,
+}
+
 pub fn poster_url(host: &str, path: Option<&str>) -> Option<String> {
+    image_url(host, path, "w500")
+}
+
+fn image_url(host: &str, path: Option<&str>, size: &str) -> Option<String> {
     let path = path.filter(|p| !p.is_empty())?;
     Some(if path.starts_with("/proxy") {
         format!("{host}{path}")
     } else if path.starts_with("http") {
         format!("{host}/proxy/image?url={}", urlencoding::encode(path))
     } else {
-        format!("{host}/proxy/image?url={}", urlencoding::encode(&format!("https://image.tmdb.org/t/p/w500{path}")))
+        format!("{host}/proxy/image?url={}", urlencoding::encode(&format!("https://image.tmdb.org/t/p/{size}{path}")))
     })
 }
 
@@ -228,6 +329,8 @@ fn title_out(host: &str, t: Title) -> TitleOut {
         rating: t.rating,
         overview: t.overview,
         poster: poster_url(host, t.poster_path.as_deref()),
+        backdrop: image_url(host, t.backdrop_path.as_deref(), "w1280"),
+        genres: t.genres,
         seasons: t
             .seasons
             .into_iter()
@@ -240,6 +343,17 @@ fn title_out(host: &str, t: Title) -> TitleOut {
                 poster: poster_url(host, s.cover.as_deref()),
             })
             .collect(),
+    }
+}
+
+fn details_out(host: &str, d: Details) -> DetailsOut {
+    DetailsOut {
+        logo: image_url(host, d.logo.as_deref(), "w500"),
+        title: title_out(host, d.title),
+        runtime: d.runtime,
+        tagline: d.tagline,
+        cast: d.cast,
+        season_count: d.seasons,
     }
 }
 
@@ -258,14 +372,32 @@ fn continue_out(host: &str, r: ContinueRow) -> ContinueOut {
 }
 
 fn home(api: &Api, host: &str) -> Value {
-    let (resume, trending) = thread::scope(|s| {
+    let (resume, today, week, top_rated, popular_tv, anime) = thread::scope(|s| {
         let a = s.spawn(|| api.continue_rows().unwrap_or_default());
-        let b = s.spawn(|| api.trending().unwrap_or_default());
-        (a.join().unwrap_or_default(), b.join().unwrap_or_default())
+        let b = s.spawn(|| api.list("trending/all/day").unwrap_or_default());
+        let c = s.spawn(|| api.trending().unwrap_or_default());
+        let d = s.spawn(|| api.list("movie/top_rated").unwrap_or_default());
+        let e = s.spawn(|| api.list("tv/popular").unwrap_or_default());
+        let f = s.spawn(|| api.anime_trending().unwrap_or_default());
+        (
+            a.join().unwrap_or_default(),
+            b.join().unwrap_or_default(),
+            c.join().unwrap_or_default(),
+            d.join().unwrap_or_default(),
+            e.join().unwrap_or_default(),
+            f.join().unwrap_or_default(),
+        )
     });
+    let hero = today.first().and_then(|t| api.details(t.kind, t.id).ok()).map(|d| details_out(host, d));
+    let out = |list: Vec<Title>, limit: usize| -> Vec<TitleOut> { list.into_iter().take(limit).map(|t| title_out(host, t)).collect() };
     json!({
+        "hero": hero,
         "continue": resume.into_iter().map(|r| continue_out(host, r)).collect::<Vec<_>>(),
-        "trending": trending.into_iter().map(|t| title_out(host, t)).collect::<Vec<_>>(),
+        "top": out(today, 10),
+        "trending": out(week, 20),
+        "top_rated": out(top_rated, 20),
+        "popular_tv": out(popular_tv, 20),
+        "anime": out(anime, 20),
     })
 }
 
@@ -300,7 +432,8 @@ fn title(api: &Api, host: &str, kind: &str, id: u64, dub: bool) -> Result<Value>
                         number: e.number as f64,
                         name: e.name,
                         overview: e.overview,
-                        still: poster_url(host, e.still.as_deref()),
+                        still: image_url(host, e.still.as_deref(), "w300"),
+                        runtime: e.runtime,
                         sources: Vec::new(),
                     });
                 }
@@ -321,8 +454,13 @@ fn title(api: &Api, host: &str, kind: &str, id: u64, dub: bool) -> Result<Value>
 }
 
 fn anime_episodes(api: &Api, host: &str, id: u64, dub: bool) -> Result<Vec<EpisodeOut>> {
-    let providers = api.anime_providers(id, dub)?;
-    let meta = api.anime_episode_meta(id);
+    let (providers, meta, runtime) = thread::scope(|s| {
+        let a = s.spawn(|| api.anime_providers(id, dub));
+        let b = s.spawn(|| api.anime_episode_meta(id));
+        let c = s.spawn(|| api.details(Kind::Anime, id).ok().and_then(|d| d.runtime));
+        (a.join().unwrap_or_else(|_| Ok(Vec::new())), b.join().unwrap_or_default(), c.join().ok().flatten())
+    });
+    let providers = providers?;
     Ok(api::merge_episodes(&providers)
         .into_iter()
         .map(|e| {
@@ -333,6 +471,7 @@ fn anime_episodes(api: &Api, host: &str, id: u64, dub: bool) -> Result<Vec<Episo
                 name: m.and_then(|m| m.title.clone()).or(e.title.clone()).unwrap_or_default(),
                 overview: m.and_then(|m| m.desc.clone()).unwrap_or_default(),
                 still: poster_url(host, m.and_then(|m| m.still.as_deref())),
+                runtime,
                 sources: api::episode_sources(&providers, e.number).into_iter().map(|(provider, id)| Source { provider, id }).collect(),
             }
         })
@@ -340,6 +479,7 @@ fn anime_episodes(api: &Api, host: &str, id: u64, dub: bool) -> Result<Vec<Episo
 }
 
 fn play(api: &Api, lang: &str, p: PlayIn) -> Result<Value> {
+    let started = std::time::Instant::now();
     let streams: Vec<Stream> = match p.kind.as_str() {
         "movie" => {
             let id = p.id.to_string();
@@ -369,6 +509,8 @@ fn play(api: &Api, lang: &str, p: PlayIn) -> Result<Value> {
         }
         other => bail!("unknown kind {other}"),
     };
+    let names: Vec<&str> = streams.iter().map(|s| s.source.as_str()).collect();
+    log("resolve", format!("{} {} s{} e{} → [{}] in {:.1}s", p.kind, p.id, p.season, p.episode, names.join(", "), started.elapsed().as_secs_f32()));
     let out: Vec<StreamOut> = streams.into_iter().map(|s| stream_out(s, lang)).collect();
     Ok(json!({ "streams": out }))
 }

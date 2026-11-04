@@ -29,15 +29,15 @@ struct AccountView: View {
                         Button("Create account") { Task { await submit(register: true) } }
                             .disabled(busy || username.isEmpty || password.isEmpty)
                         if let message {
-                            Text(message).font(.footnote).foregroundStyle(.red)
+                            Text(message).font(.footnote).foregroundStyle(Theme.accentHi)
                         }
                     }
                 }
 
                 Section("Playback") {
                     Picker("Max quality", selection: $core.settings.maxHeight) {
-                        ForEach(qualities, id: \.self) { q in
-                            Text(q == 2160 ? "4K" : "\(q)p").tag(q)
+                        ForEach(qualities, id: \.self) { quality in
+                            Text(quality == 2160 ? "4K" : "\(quality)p").tag(quality)
                         }
                     }
                     TextField("Subtitle language", text: $core.settings.subtitleLang)
@@ -55,14 +55,18 @@ struct AccountView: View {
                 } header: {
                     Text("Server")
                 } footer: {
-                    Text("Changing the server takes effect the next time the app starts.")
+                    Text("Changing the server takes effect the next time the app starts. Device \(core.device) · build \(core.build)")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Theme.bg)
+            .tint(Theme.accent)
             .navigationTitle(core.username == nil ? "Sign in" : "Account")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(Theme.bg, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") { dismiss() }.foregroundStyle(.white)
                 }
             }
             .onChange(of: core.settings.maxHeight) { _ in Task { await core.pushSettings() } }

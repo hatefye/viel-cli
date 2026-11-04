@@ -182,6 +182,7 @@ fn serve(conn: TcpStream) -> Result<()> {
             Ok(true) if !close => continue,
             Ok(_) => return Ok(()),
             Err(err) => {
+                local::log("relay", format!("{} → {err}", line.split_whitespace().nth(1).unwrap_or("?").chars().take(160).collect::<String>()));
                 let _ = reply(&mut out, "502 Bad Gateway", "text/plain", err.to_string().as_bytes());
                 return Ok(());
             }

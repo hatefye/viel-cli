@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct VielApp: App {
     @StateObject private var core = Core.shared
+    @Environment(\.scenePhase) private var phase
 
     init() {
         let session = AVAudioSession.sharedInstance()
@@ -16,7 +17,13 @@ struct VielApp: App {
             RootView()
                 .environmentObject(core)
                 .preferredColorScheme(.dark)
-                .tint(.red)
+                .tint(.white)
+                .onChange(of: phase) { value in
+                    core.log("app", "scene \(value)")
+                    if value == .background {
+                        Task { await core.flushLogs() }
+                    }
+                }
         }
     }
 }

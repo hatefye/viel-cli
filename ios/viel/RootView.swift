@@ -2,132 +2,301 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var core: Core
-    @State private var query = ""
-    @State private var results: [Title] = []
-    @State private var home: Home?
-    @State private var searching = false
-    @State private var showAccount = false
+    @State private var home: HomeData?
     @State private var error: String?
-
-    private var browsing: Bool { query.trimmingCharacters(in: .whitespaces).isEmpty }
+    @State private var selected: Title?
+    @State private var resume: Resume?
+    @State private var playing: Playable?
+    @State private var showSearch = false
+    @State private var showAccount = false
 
     var body: some View {
         NavigationStack {
-            Group {
-                if browsing {
-                    homeList
-                } else {
-                    resultList
-                }
-            }
-            .listStyle(.plain)
-            .navigationTitle("viel")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showAccount = true
-                    } label: {
-                        Image(systemName: core.username == nil ? "person.circle" : "person.circle.fill")
-                    }
-                }
-            }
-            .navigationDestination(for: Title.self) { TitleView(title: $0, resume: nil) }
-            .navigationDestination(for: Resume.self) { TitleView(title: $0.title, resume: $0) }
-        }
-        .searchable(text: $query, prompt: "Movies, TV and anime")
-        .task(id: query) { await search() }
-        .task { await loadHome() }
-        .sheet(isPresented: $showAccount, onDismiss: { Task { await loadHome() } }) {
-            AccountView()
-        }
-    }
-
-    private var homeList: some View {
-        List {
-            if let home, !home.resume.isEmpty {
-                Section("Continue watching") {
-                    ForEach(home.resume, id: \.key) { row in
-                        NavigationLink(value: row) {
-                            HStack(spacing: 12) {
-                                Poster(url: row.poster)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(row.show).font(.headline).lineLimit(1)
-                                    Text(row.label).font(.subheadline).foregroundStyle(.secondary)
-                                    ProgressView(value: min(max(row.position / max(row.duration, 1), 0), 1))
-                                        .tint(.red)
-                                }
-                            }
+            ZStack(alignment: .top) {
+                Theme.bg.ignoresSafeArea()
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 30) {
+                        hero
+                        if let home {
+                            rows(home)
+                        } else if let error {
+                            Label(error, systemImage: "exclamationmark.triangle")
+                                .foregroundStyle(Theme.muted)
+                                .padding(.horizontal, 16)
+                        } else {
+                            HStack { Spacer(); ProgressView().tint(.white); Spacer() }
                         }
+                        footer
                     }
+                    .padding(.bottom, 40)
                 }
+                .ignoresSafeArea(edges: .top)
+                .refreshable { await load() }
+                header
             }
-            Section(home == nil ? "" : "Trending") {
-                if let home {
-                    ForEach(home.trending, id: \.key) { title in
-                        NavigationLink(value: title) { TitleRow(title: title) }
-                    }
-                } else if let error {
-                    Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.secondary)
-                } else {
-                    HStack { Spacer(); ProgressView(); Spacer() }
-                }
-            }
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(for: ListPage.self) { ListView(page: $0) }
+        }
+        .task { await load() }
+        .fullScreenCover(item: $selected) { DetailsView(title: $0, resume: nil).environmentObject(core) }
+        .fullScreenCover(item: $resume) { DetailsView(title: $0.title, resume: $0).environmentObject(core) }
+        .fullScreenCover(item: $playing) { PlayerView(item: $0).environmentObject(core) }
+        .fullScreenCover(isPresented: $showSearch) { SearchView().environmentObject(core) }
+        .sheet(isPresented: $showAccount, onDismiss: { Task { await load() } }) {
+            AccountView().environmentObject(core)
         }
     }
 
-    private var resultList: some View {
-        List {
-            if results.isEmpty {
-                HStack {
-                    Spacer()
-                    if searching { ProgressView() } else { Text("Nothing found").foregroundStyle(.secondary) }
-                    Spacer()
+    private var header: some View {
+        HStack {
+            Text("Viel")
+                .font(.system(size: 30, weight: .heavy))
+                .foregroundStyle(.white)
+            Spacer()
+            Button { showSearch = true } label: { Image(systemName: "magnifyingglass") }
+                .buttonStyle(GlassCircle(size: 42))
+            Button { showAccount = true } label: { Image(systemName: core.username == nil ? "person" : "person.fill") }
+                .buttonStyle(GlassCircle(size: 42))
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 6)
+    }
+
+    private var hero: some View {
+        let detail = home?.hero
+        return ZStack(alignment: .bottom) {
+            Backdrop(url: detail?.poster ?? detail?.backdrop, height: 620)
+            LinearGradient(
+                stops: [
+                    .init(color: Theme.bg.opacity(0.55), location: 0),
+                    .init(color: .clear, location: 0.18),
+                    .init(color: .clear, location: 0.45),
+                    .init(color: Theme.bg.opacity(0.85), location: 0.78),
+                    .init(color: Theme.bg, location: 1),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            if let detail {
+                VStack(spacing: 12) {
+                    Logo(url: detail.logo, name: detail.name, maxWidth: 320, size: 42)
+                        .padding(.horizontal, 24)
+                    HStack(spacing: 12) {
+                        Text("\(Int((detail.rating * 10).rounded()))% match")
+                            .foregroundStyle(Theme.match)
+                            .fontWeight(.semibold)
+                        if !detail.year.isEmpty { Text(detail.year) }
+                        Chip(detail.title.kindLabel)
+                        if let runtime = Format.runtime(detail.runtime) { Text(runtime) }
+                    }
+                    .font(.system(size: 17))
+                    .foregroundStyle(Theme.soft)
+                    if !detail.genres.isEmpty {
+                        Text(detail.genres.prefix(3).joined(separator: " · "))
+                            .font(.system(size: 16))
+                            .foregroundStyle(Theme.soft)
+                    }
+                    if let overview = detail.overview {
+                        Text(overview)
+                            .font(.system(size: 17))
+                            .foregroundStyle(Theme.soft)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .padding(.horizontal, 22)
+                    }
+                    HStack(spacing: 12) {
+                        Button {
+                            open(detail.title, play: true)
+                        } label: {
+                            Label("Play", systemImage: "play.fill")
+                        }
+                        .buttonStyle(WhitePill())
+                        Button {
+                            selected = detail.title
+                        } label: {
+                            Label("More Info", systemImage: "info.circle")
+                        }
+                        .buttonStyle(GlassPill())
+                    }
+                    .padding(.top, 6)
+                }
+                .padding(.bottom, 6)
+            }
+        }
+        .frame(height: 620)
+        .clipped()
+    }
+
+    @ViewBuilder
+    private func rows(_ home: HomeData) -> some View {
+        if !home.resume.isEmpty {
+            Row(title: "Continue watching") {
+                ForEach(home.resume, id: \.key) { row in
+                    ResumeCard(row: row).onTapGesture { resume = row }
                 }
             }
-            ForEach(results, id: \.key) { title in
-                NavigationLink(value: title) { TitleRow(title: title) }
+        }
+        Row(title: "Top 10 today") {
+            ForEach(Array(home.top.enumerated()), id: \.element.key) { index, title in
+                TopCard(rank: index + 1, title: title).onTapGesture { selected = title }
             }
+        }
+        Row(title: "Trending now", page: ListPage(title: "Trending now", path: "trending/all/week")) {
+            ForEach(home.trending, id: \.key) { title in
+                LandscapeCard(title: title).onTapGesture { selected = title }
+            }
+        }
+        Row(title: "Top rated", page: ListPage(title: "Top rated", path: "movie/top_rated")) {
+            ForEach(home.topRated, id: \.key) { title in
+                Poster(url: title.poster).onTapGesture { selected = title }
+            }
+        }
+        Row(title: "Popular shows", page: ListPage(title: "Popular shows", path: "tv/popular")) {
+            ForEach(home.popularTv, id: \.key) { title in
+                Poster(url: title.poster).onTapGesture { selected = title }
+            }
+        }
+        if !home.anime.isEmpty {
+            Row(title: "Trending anime") {
+                ForEach(home.anime, id: \.key) { title in
+                    Poster(url: title.poster).onTapGesture { selected = title }
+                }
+            }
+        }
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Browse by genre")
+                .font(.system(size: 22, weight: .bold))
+            FlowLayout(spacing: 8) {
+                ForEach(movieGenres, id: \.1) { genre in
+                    NavigationLink(value: ListPage(title: genre.0, path: "discover/movie?with_genres=\(genre.1)&sort_by=popularity.desc")) {
+                        Tag(text: genre.0, fill: Color.white.opacity(0.08))
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+
+    private var footer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider().overlay(Theme.border)
+            Text("This app does not store any files on its server, it only links to media hosted by third-party services.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.faint)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+    }
+
+    private func open(_ title: Title, play: Bool) {
+        if play, title.isMovie {
+            playing = Playable(title: title, episodes: [], index: -1, dub: false, startAt: nil, chain: [])
+        } else {
+            selected = title
         }
     }
 
-    private func loadHome() async {
+    private func load() async {
         do {
             home = try await core.get("home")
             error = nil
         } catch {
             self.error = error.localizedDescription
+            core.log("home", "load failed: \(error.localizedDescription)")
         }
-    }
-
-    private func search() async {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else {
-            results = []
-            return
-        }
-        try? await Task.sleep(nanoseconds: 250_000_000)
-        guard !Task.isCancelled else { return }
-        searching = true
-        let found: [Title] = (try? await core.get("search", ["q": q])) ?? []
-        guard !Task.isCancelled else { return }
-        results = found
-        searching = false
     }
 }
 
-struct TitleRow: View {
+struct Row<Content: View>: View {
+    let title: String
+    var page: ListPage?
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(.system(size: 22, weight: .bold))
+                Spacer()
+                if let page {
+                    NavigationLink(value: page) {
+                        HStack(spacing: 2) {
+                            Text("View all")
+                            Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
+                        }
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.muted)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 10) { content }
+                    .padding(.horizontal, 16)
+            }
+        }
+    }
+}
+
+struct TopCard: View {
+    let rank: Int
     let title: Title
 
     var body: some View {
-        HStack(spacing: 12) {
-            Poster(url: title.poster)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title.name).font(.headline).lineLimit(1)
-                Text(title.subtitle).font(.subheadline).foregroundStyle(.secondary)
-                if let overview = title.overview, !overview.isEmpty {
-                    Text(overview).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        ZStack(alignment: .topLeading) {
+            Poster(url: title.poster, width: 124, height: 186, radius: 12)
+            VStack(spacing: -3) {
+                Text("TOP").font(.system(size: 9, weight: .bold))
+                Text(String(format: "%02d", rank)).font(.system(size: 19, weight: .heavy))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .padding(7)
+        }
+    }
+}
+
+struct LandscapeCard: View {
+    let title: Title
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Poster(url: title.backdrop ?? title.poster, width: 290, height: 163, radius: 12)
+            Text(title.name).font(.system(size: 17, weight: .semibold)).lineLimit(1)
+            HStack(spacing: 8) {
+                if let genre = title.genres.first { Text(genre).foregroundStyle(Theme.muted) }
+                if !title.year.isEmpty { Text(title.year).foregroundStyle(Theme.muted) }
+                if let rating = title.ratingText { Text(rating).foregroundStyle(Theme.star) }
+            }
+            .font(.system(size: 13))
+        }
+        .frame(width: 290, alignment: .leading)
+    }
+}
+
+struct ResumeCard: View {
+    let row: Resume
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .bottom) {
+                Poster(url: row.poster, width: 124, height: 186, radius: 12)
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(Color.white.opacity(0.25))
+                        Rectangle().fill(Theme.accent).frame(width: geometry.size.width * row.fraction)
+                    }
                 }
+                .frame(height: 3)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
+            }
+            Text(row.show).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+            if let label = row.episodeLabel {
+                Text(label).font(.system(size: 12)).foregroundStyle(Theme.muted)
             }
         }
+        .frame(width: 124, alignment: .leading)
     }
 }

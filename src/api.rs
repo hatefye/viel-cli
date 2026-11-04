@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
+use std::thread;
 use std::time::Duration;
 
 const SOURCES: [&str; 5] = ["cno", "mapple", "vixsrc", "vidbolt", "vidrock"];
@@ -45,6 +46,58 @@ pub struct Title {
     pub overview: Option<String>,
     pub poster_path: Option<String>,
     pub seasons: Vec<AnimeSeason>,
+    pub backdrop_path: Option<String>,
+    pub genres: Vec<String>,
+}
+
+impl Title {
+    pub fn bare(id: u64, kind: Kind, name: String, poster_path: Option<String>) -> Self {
+        Title {
+            id,
+            kind,
+            name,
+            year: String::new(),
+            rating: 0.0,
+            overview: None,
+            poster_path,
+            seasons: Vec::new(),
+            backdrop_path: None,
+            genres: Vec::new(),
+        }
+    }
+}
+
+pub fn genre_name(id: u32) -> Option<&'static str> {
+    Some(match id {
+        28 => "Action",
+        12 => "Adventure",
+        16 => "Animation",
+        35 => "Comedy",
+        80 => "Crime",
+        99 => "Documentary",
+        18 => "Drama",
+        10751 => "Family",
+        14 => "Fantasy",
+        36 => "History",
+        27 => "Horror",
+        10402 => "Music",
+        9648 => "Mystery",
+        10749 => "Romance",
+        878 => "Science Fiction",
+        10770 => "TV Movie",
+        53 => "Thriller",
+        10752 => "War",
+        37 => "Western",
+        10759 => "Action & Adventure",
+        10762 => "Kids",
+        10763 => "News",
+        10764 => "Reality",
+        10765 => "Sci-Fi & Fantasy",
+        10766 => "Soap",
+        10767 => "Talk",
+        10768 => "War & Politics",
+        _ => return None,
+    })
 }
 
 #[derive(Clone, Deserialize)]
@@ -97,14 +150,9 @@ fn num<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Er
 impl AnimeSeason {
     pub fn into_title(self, poster: Option<String>) -> Title {
         Title {
-            id: self.id,
-            kind: Kind::Anime,
-            name: self.title.clone(),
             year: self.year.clone(),
-            rating: 0.0,
             overview: Some(plural(self.episodes, "episode")),
-            poster_path: self.cover.or(poster),
-            seasons: Vec::new(),
+            ..Title::bare(self.id, Kind::Anime, self.title.clone(), self.cover.or(poster))
         }
     }
 }
@@ -141,6 +189,16 @@ pub struct Episode {
     pub name: String,
     pub overview: String,
     pub still: Option<String>,
+    pub runtime: Option<u32>,
+}
+
+pub struct Details {
+    pub title: Title,
+    pub logo: Option<String>,
+    pub runtime: Option<u32>,
+    pub tagline: String,
+    pub cast: Vec<String>,
+    pub seasons: u32,
 }
 
 impl fmt::Display for Episode {
@@ -230,13 +288,94 @@ impl Api {
     pub fn search(&self, query: &str) -> Result<Vec<Title>> {
         let url = format!("{}/proxy/tmdb/search/multi", self.host);
         let resp: SearchResp = self.client.get(url).query(&[("query", query)]).send()?.json()?;
-        Ok(resp.results.into_iter().filter_map(SearchItem::into_title).collect())
+        Ok(resp.results.into_iter().filter_map(|i| i.into_title(None)).collect())
     }
 
     pub fn trending(&self) -> Result<Vec<Title>> {
-        let url = format!("{}/proxy/tmdb/trending/all/week", self.host);
+        self.list("trending/all/week")
+    }
+
+    pub fn list(&self, path: &str) -> Result<Vec<Title>> {
+        let kind = if path.starts_with("tv/") || path.starts_with("discover/tv") {
+            Some(Kind::Tv)
+        } else if path.starts_with("movie/") || path.starts_with("discover/movie") {
+            Some(Kind::Movie)
+        } else {
+            None
+        };
+        let url = format!("{}/proxy/tmdb/{}", self.host, path);
         let resp: SearchResp = self.client.get(url).send()?.json()?;
-        Ok(resp.results.into_iter().filter_map(SearchItem::into_title).collect())
+        Ok(resp.results.into_iter().filter_map(|i| i.into_title(kind)).collect())
+    }
+
+    pub fn details(&self, kind: Kind, id: u64) -> Result<Details> {
+        if kind == Kind::Anime {
+            return self.anime_details(id);
+        }
+        let slug = kind.slug();
+        let (detail, images, credits) = thread::scope(|s| {
+            let a = s.spawn(|| -> Result<DetailResp> { Ok(self.client.get(format!("{}/proxy/tmdb/{slug}/{id}", self.host)).send()?.json()?) });
+            let b = s.spawn(|| {
+                self.client
+                    .get(format!("{}/proxy/tmdb/{slug}/{id}/images", self.host))
+                    .query(&[("include_image_language", "en,null")])
+                    .send()
+                    .ok()?
+                    .json::<ImagesResp>()
+                    .ok()
+            });
+            let c = s.spawn(|| self.client.get(format!("{}/proxy/tmdb/{slug}/{id}/credits", self.host)).send().ok()?.json::<CreditsResp>().ok());
+            (a.join().unwrap_or_else(|_| Err(anyhow!("details lookup failed"))), b.join().ok().flatten(), c.join().ok().flatten())
+        });
+        let detail = detail?;
+        let logo = images.and_then(|i| {
+            let png = i.logos.iter().find(|l| l.file_path.ends_with(".png")).map(|l| l.file_path.clone());
+            png.or_else(|| i.logos.into_iter().next().map(|l| l.file_path))
+        });
+        let date = detail.release_date.or(detail.first_air_date).unwrap_or_default();
+        let runtime = detail.runtime.or_else(|| detail.episode_run_time.and_then(|r| r.into_iter().next()));
+        Ok(Details {
+            title: Title {
+                id,
+                kind,
+                name: detail.title.or(detail.name).unwrap_or_default(),
+                year: date.split('-').next().unwrap_or_default().to_string(),
+                rating: detail.vote_average.unwrap_or(0.0),
+                overview: detail.overview.filter(|s| !s.is_empty()),
+                poster_path: detail.poster_path.filter(|s| !s.is_empty()),
+                seasons: Vec::new(),
+                backdrop_path: detail.backdrop_path.filter(|s| !s.is_empty()),
+                genres: detail.genres.into_iter().map(|g| g.name).collect(),
+            },
+            logo,
+            runtime,
+            tagline: detail.tagline.unwrap_or_default(),
+            cast: credits.map(|c| c.cast.into_iter().take(6).map(|m| m.name).collect()).unwrap_or_default(),
+            seasons: detail.number_of_seasons.unwrap_or(0),
+        })
+    }
+
+    fn anime_details(&self, id: u64) -> Result<Details> {
+        let url = format!("{}/miruro/info/{}", self.host, id);
+        let info: AnimeInfoFull = self.client.get(url).send()?.json()?;
+        let name = info.title.as_ref().and_then(|t| t.english.clone().or_else(|| t.romaji.clone())).unwrap_or_default();
+        let overview = info.description.map(|d| strip_html(&d)).filter(|d| !d.is_empty());
+        let studios = info.studios.map(|s| s.nodes.into_iter().filter(|n| n.is_animation_studio).map(|n| n.name).take(3).collect()).unwrap_or_default();
+        Ok(Details {
+            title: Title {
+                year: info.season_year.map(|y| y.to_string()).unwrap_or_default(),
+                rating: info.average_score.map(|s| s as f64 / 10.0).unwrap_or(0.0),
+                overview,
+                backdrop_path: info.banner_image.filter(|s| !s.is_empty()),
+                genres: info.genres.unwrap_or_default(),
+                ..Title::bare(id, Kind::Anime, name, info.cover_image.and_then(|c| c.extra_large.or(c.large)))
+            },
+            logo: None,
+            runtime: info.duration,
+            tagline: String::new(),
+            cast: studios,
+            seasons: 0,
+        })
     }
 
     pub fn seasons(&self, id: u64) -> Result<Vec<Season>> {
@@ -265,6 +404,7 @@ impl Api {
                 name: e.name,
                 overview: e.overview.unwrap_or_default(),
                 still: e.still_path.filter(|s| !s.is_empty()),
+                runtime: e.runtime,
             })
             .collect())
     }
@@ -329,6 +469,17 @@ impl Api {
         Ok(resp.results.into_iter().map(AnimeItem::into_title).collect())
     }
 
+    pub fn anime_trending(&self) -> Result<Vec<Title>> {
+        let url = format!("{}/miruro/trending", self.host);
+        let resp: AnimeSearchResp = self.client.get(url).send()?.json()?;
+        Ok(resp.results.into_iter().map(AnimeItem::into_title).collect())
+    }
+
+    pub fn log_event(&self, body: &serde_json::Value) {
+        let url = format!("{}/api/playerlog", self.host);
+        let _ = self.authed(self.client.post(url)).timeout(Duration::from_secs(10)).json(body).send();
+    }
+
     pub fn anime_chain(&self, anilist_id: u64) -> Vec<AnimeSeason> {
         let url = format!("{}/miruro/seasons/{}", self.host, anilist_id);
         self.client
@@ -361,14 +512,10 @@ impl Api {
             let first = &chain[0];
             let total: u64 = chain.iter().map(|c| c.episodes).sum();
             out.push(Title {
-                id: root,
-                kind: Kind::Anime,
-                name: first.title.clone(),
                 year: first.year.clone(),
-                rating: 0.0,
                 overview: Some(format!("{} · {}", plural(chain.len() as u64, "season"), plural(total, "episode"))),
-                poster_path: first.cover.clone().or(title.poster_path),
-                seasons: chain,
+                seasons: chain.clone(),
+                ..Title::bare(root, Kind::Anime, first.title.clone(), first.cover.clone().or(title.poster_path))
             });
         }
         out
@@ -688,14 +835,18 @@ struct SearchItem {
     vote_average: Option<f64>,
     overview: Option<String>,
     poster_path: Option<String>,
+    backdrop_path: Option<String>,
+    #[serde(default)]
+    genre_ids: Vec<u32>,
 }
 
 impl SearchItem {
-    fn into_title(self) -> Option<Title> {
+    fn into_title(self, fallback: Option<Kind>) -> Option<Title> {
         let kind = match self.media_type.as_deref() {
             Some("movie") => Kind::Movie,
             Some("tv") => Kind::Tv,
-            _ => return None,
+            Some(_) => return None,
+            None => fallback?,
         };
         let name = self.title.or(self.name)?;
         let date = self.release_date.or(self.first_air_date).unwrap_or_default();
@@ -709,8 +860,116 @@ impl SearchItem {
             overview: self.overview.filter(|s| !s.is_empty()),
             poster_path: self.poster_path.filter(|s| !s.is_empty()),
             seasons: Vec::new(),
+            backdrop_path: self.backdrop_path.filter(|s| !s.is_empty()),
+            genres: self.genre_ids.iter().filter_map(|g| genre_name(*g)).map(str::to_string).collect(),
         })
     }
+}
+
+#[derive(Deserialize)]
+struct DetailResp {
+    title: Option<String>,
+    name: Option<String>,
+    overview: Option<String>,
+    tagline: Option<String>,
+    poster_path: Option<String>,
+    backdrop_path: Option<String>,
+    release_date: Option<String>,
+    first_air_date: Option<String>,
+    vote_average: Option<f64>,
+    runtime: Option<u32>,
+    episode_run_time: Option<Vec<u32>>,
+    number_of_seasons: Option<u32>,
+    #[serde(default)]
+    genres: Vec<GenreItem>,
+}
+
+#[derive(Deserialize)]
+struct GenreItem {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct ImagesResp {
+    #[serde(default)]
+    logos: Vec<ImageItem>,
+}
+
+#[derive(Deserialize)]
+struct ImageItem {
+    file_path: String,
+}
+
+#[derive(Deserialize)]
+struct CreditsResp {
+    #[serde(default)]
+    cast: Vec<CastItem>,
+}
+
+#[derive(Deserialize)]
+struct CastItem {
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct AnimeInfoFull {
+    title: Option<AnimeTitleField>,
+    description: Option<String>,
+    #[serde(rename = "coverImage")]
+    cover_image: Option<AnimeCover>,
+    #[serde(rename = "bannerImage")]
+    banner_image: Option<String>,
+    #[serde(rename = "seasonYear", default, deserialize_with = "opt_num")]
+    season_year: Option<u64>,
+    #[serde(default, deserialize_with = "opt_num")]
+    duration: Option<u32>,
+    #[serde(rename = "averageScore", default, deserialize_with = "opt_num")]
+    average_score: Option<u32>,
+    genres: Option<Vec<String>>,
+    studios: Option<Studios>,
+}
+
+#[derive(Deserialize)]
+struct Studios {
+    #[serde(default)]
+    nodes: Vec<Studio>,
+}
+
+#[derive(Deserialize)]
+struct Studio {
+    name: String,
+    #[serde(rename = "isAnimationStudio", default)]
+    is_animation_studio: bool,
+}
+
+fn opt_num<'de, D: serde::Deserializer<'de>, T: TryFrom<u64>>(d: D) -> std::result::Result<Option<T>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        N(u64),
+        S(String),
+        Nil(()),
+    }
+    let n = match Raw::deserialize(d)? {
+        Raw::N(n) => Some(n),
+        Raw::S(s) => s.trim().parse().ok(),
+        Raw::Nil(()) => None,
+    };
+    Ok(n.and_then(|n| T::try_from(n).ok()))
+}
+
+pub fn strip_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_tag = false;
+    for ch in text.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.replace("&quot;", "\"").replace("&#039;", "'").replace("&amp;", "&").trim().to_string()
 }
 
 #[derive(Deserialize)]
@@ -736,6 +995,7 @@ struct EpisodeItem {
     name: String,
     overview: Option<String>,
     still_path: Option<String>,
+    runtime: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -842,14 +1102,19 @@ struct AnimeSearchResp {
 
 #[derive(Deserialize)]
 struct AnimeItem {
+    #[serde(deserialize_with = "num")]
     id: u64,
     title: Option<AnimeTitleField>,
-    #[serde(rename = "seasonYear")]
+    #[serde(rename = "seasonYear", default, deserialize_with = "opt_num")]
     season_year: Option<u32>,
+    #[serde(default, deserialize_with = "opt_num")]
     episodes: Option<u32>,
     cover_image: Option<AnimeCover>,
     #[serde(rename = "coverImage")]
     cover_image_alt: Option<AnimeCover>,
+    #[serde(rename = "bannerImage")]
+    banner_image: Option<String>,
+    genres: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -874,14 +1139,11 @@ impl AnimeItem {
         let cover = self.cover_image.or(self.cover_image_alt);
         let poster = cover.and_then(|c| c.extra_large.or(c.large));
         Title {
-            id: self.id,
-            kind: Kind::Anime,
-            name,
             year: self.season_year.map(|y| y.to_string()).unwrap_or_default(),
-            rating: 0.0,
             overview: self.episodes.map(|e| format!("{e} episodes")),
-            poster_path: poster,
-            seasons: Vec::new(),
+            backdrop_path: self.banner_image.filter(|s| !s.is_empty()),
+            genres: self.genres.unwrap_or_default(),
+            ..Title::bare(self.id, Kind::Anime, name, poster)
         }
     }
 }
