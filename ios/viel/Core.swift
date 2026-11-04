@@ -7,6 +7,23 @@ struct Settings: Codable {
     var subtitleLang = "en"
     var dub = false
     var autoplay = true
+    var subSize = 1.0
+    var subBackground = true
+    var subLift = 0.0
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let box = try decoder.container(keyedBy: CodingKeys.self)
+        host = try box.decodeIfPresent(String.self, forKey: .host) ?? host
+        maxHeight = try box.decodeIfPresent(Int.self, forKey: .maxHeight) ?? maxHeight
+        subtitleLang = try box.decodeIfPresent(String.self, forKey: .subtitleLang) ?? subtitleLang
+        dub = try box.decodeIfPresent(Bool.self, forKey: .dub) ?? dub
+        autoplay = try box.decodeIfPresent(Bool.self, forKey: .autoplay) ?? autoplay
+        subSize = try box.decodeIfPresent(Double.self, forKey: .subSize) ?? subSize
+        subBackground = try box.decodeIfPresent(Bool.self, forKey: .subBackground) ?? subBackground
+        subLift = try box.decodeIfPresent(Double.self, forKey: .subLift) ?? subLift
+    }
 
     static func load() -> Settings {
         guard let data = UserDefaults.standard.data(forKey: "settings"),
@@ -38,6 +55,8 @@ final class Core: ObservableObject {
     let port: UInt16
     let device: String
     let build: String
+    let downloadsDir: URL
+    private var keepAlive: UIBackgroundTaskIdentifier = .invalid
     @Published var username: String?
     @Published var settings: Settings {
         didSet { settings.save() }
@@ -50,7 +69,9 @@ final class Core: ObservableObject {
         let settings = Settings.load()
         self.settings = settings
         let token = UserDefaults.standard.string(forKey: "token") ?? ""
-        port = viel_start(settings.host, token)
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        downloadsDir = documents.appendingPathComponent("Downloads", isDirectory: true)
+        port = viel_start(settings.host, token, downloadsDir.path)
         let stored = UserDefaults.standard.string(forKey: "device") ?? String(UUID().uuidString.prefix(8)).lowercased()
         UserDefaults.standard.set(stored, forKey: "device")
         device = stored
@@ -130,6 +151,56 @@ final class Core: ObservableObject {
         let _: Ok? = try? await post("progress", progress)
     }
 
+    func history() async -> [HistoryRow] {
+        (try? await get("history")) ?? []
+    }
+
+    func downloads() async -> [Download] {
+        (try? await get("downloads")) ?? []
+    }
+
+    func download(_ item: Playable) async throws {
+        let request = item.request
+        let body = DownloadRequest(kind: request.kind, id: request.id, title: request.title, season: request.season, episode: request.episode, dub: request.dub, sources: request.sources, key: item.downloadKey, meta: item.downloadMeta)
+        let _: Ok = try await post("downloads", body)
+        log("download", "queued \(item.downloadKey)")
+    }
+
+    func removeDownload(_ key: String) async {
+        let _: Ok? = try? await post("downloads/remove", ["key": key])
+        log("download", "removed \(key)")
+    }
+
+    nonisolated func relayLink(_ url: String, referer: String?) -> URL? {
+        var components = URLComponents(string: "http://127.0.0.1:\(port)/s/thumb.webp")!
+        var items = [URLQueryItem(name: "u", value: url)]
+        if let referer, !referer.isEmpty { items.append(URLQueryItem(name: "r", value: referer)) }
+        components.queryItems = items
+        return components.url
+    }
+
+    func enteredBackground() {
+        Task {
+            await flushLogs()
+            let active = await downloads().contains(where: \.isActive)
+            guard active, keepAlive == .invalid else { return }
+            keepAlive = UIApplication.shared.beginBackgroundTask(withName: "downloads") { [weak self] in
+                self?.endKeepAlive()
+            }
+            log("download", "continuing in background")
+        }
+    }
+
+    func enteredForeground() {
+        endKeepAlive()
+    }
+
+    private func endKeepAlive() {
+        guard keepAlive != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(keepAlive)
+        keepAlive = .invalid
+    }
+
     func removeHistory(kind: String, id: UInt64) async {
         struct Body: Encodable {
             let kind: String
@@ -162,5 +233,42 @@ final class Core: ObservableObject {
         let batch = LogBatch(device: device, build: build, lines: lines)
         lines = []
         let _: Ok? = try? await post("log", batch)
+    }
+}
+
+enum Memory {
+    private static func map(_ key: String) -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+    }
+
+    private static func store(_ key: String, _ value: [String: String]) {
+        UserDefaults.standard.set(value, forKey: key)
+    }
+
+    static func preferredSource(for title: String) -> String? {
+        map("preferred")[title]
+    }
+
+    static func remember(source: String, for title: String) {
+        var all = map("preferred")
+        all[title] = source
+        store("preferred", all)
+    }
+
+    static func order(_ streams: [Stream], for title: String) -> [Stream] {
+        guard let liked = preferredSource(for: title), let at = streams.firstIndex(where: { $0.source == liked }), at > 0 else { return streams }
+        var out = streams
+        out.insert(out.remove(at: at), at: 0)
+        return out
+    }
+
+    static func subtitleLanguage(for title: String) -> String? {
+        map("sublang")[title]
+    }
+
+    static func remember(subtitle: String?, for title: String) {
+        var all = map("sublang")
+        all[title] = subtitle ?? "off"
+        store("sublang", all)
     }
 }

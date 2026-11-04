@@ -1,5 +1,5 @@
 use crate::api::{self, Api, ContinueRow, Details, Kind, ProgressUpdate, Stream, Title};
-use crate::relay;
+use crate::{offline, relay};
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -241,6 +241,22 @@ fn route(
             q("dub") == "1",
         )?,
         ("POST", "play") => play(&api, &lang, serde_json::from_slice(body)?)?,
+        ("GET", "history") => history(&api, &host),
+        ("GET", "downloads") => json!(offline::list()),
+        ("GET", "offline") => {
+            offline::playback(&q("key")).ok_or_else(|| anyhow::anyhow!("download not found"))?
+        }
+        ("POST", "downloads") => {
+            let d: DownloadIn = serde_json::from_slice(body)?;
+            let streams = resolve_streams(&api, &lang, d.play)?;
+            offline::enqueue(&d.key, d.meta, streams, relay::max_height(), &lang)?;
+            json!({ "ok": true })
+        }
+        ("POST", "downloads/remove") => {
+            let d: KeyIn = serde_json::from_slice(body)?;
+            offline::remove(&d.key)?;
+            json!({ "ok": true })
+        }
         ("POST", "progress") => {
             let p: Progress = serde_json::from_slice(body)?;
             api.save_progress(&ProgressUpdate {
@@ -388,6 +404,8 @@ struct StreamOut {
     hls: bool,
     subs: Vec<SubOut>,
     intro: Option<(f64, f64)>,
+    outro: Option<(f64, f64)>,
+    thumbs: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -436,6 +454,33 @@ struct Login {
 struct RemoveIn {
     kind: String,
     id: u64,
+}
+
+#[derive(Deserialize)]
+struct DownloadIn {
+    #[serde(flatten)]
+    play: PlayIn,
+    key: String,
+    #[serde(default)]
+    meta: Value,
+}
+
+#[derive(Deserialize)]
+struct KeyIn {
+    key: String,
+}
+
+#[derive(Serialize)]
+struct HistoryOut {
+    id: u64,
+    kind: String,
+    show: String,
+    poster: Option<String>,
+    season: u32,
+    episode: u32,
+    position: f64,
+    duration: f64,
+    updated_at: u64,
 }
 
 #[derive(Deserialize)]
@@ -671,6 +716,26 @@ fn anime_episodes(api: &Api, host: &str, id: u64, dub: bool) -> Result<Vec<Episo
 
 fn play(api: &Api, lang: &str, p: PlayIn) -> Result<Value> {
     let started = Instant::now();
+    let (kind, id, season, episode) = (p.kind.clone(), p.id, p.season, p.episode);
+    let streams = resolve_streams(api, lang, p)?;
+    let names: Vec<&str> = streams.iter().map(|s| s.source.as_str()).collect();
+    log(
+        "resolve",
+        format!(
+            "{} {} s{} e{} → [{}] in {:.1}s",
+            kind,
+            id,
+            season,
+            episode,
+            names.join(", "),
+            started.elapsed().as_secs_f32()
+        ),
+    );
+    let out: Vec<StreamOut> = streams.into_iter().map(|s| stream_out(s, lang)).collect();
+    Ok(json!({ "streams": out }))
+}
+
+fn resolve_streams(api: &Api, lang: &str, p: PlayIn) -> Result<Vec<Stream>> {
     relay::reset_activity();
     let streams: Vec<Stream> = match p.kind.as_str() {
         "movie" | "tv" => {
@@ -717,21 +782,78 @@ fn play(api: &Api, lang: &str, p: PlayIn) -> Result<Value> {
         }
         other => bail!("unknown kind {other}"),
     };
-    let names: Vec<&str> = streams.iter().map(|s| s.source.as_str()).collect();
-    log(
-        "resolve",
-        format!(
-            "{} {} s{} e{} → [{}] in {:.1}s",
-            p.kind,
-            p.id,
-            p.season,
-            p.episode,
-            names.join(", "),
-            started.elapsed().as_secs_f32()
-        ),
-    );
-    let out: Vec<StreamOut> = streams.into_iter().map(|s| stream_out(s, lang)).collect();
-    Ok(json!({ "streams": out }))
+    Ok(streams)
+}
+
+fn history(api: &Api, host: &str) -> Value {
+    let entries = api.history().unwrap_or_default();
+    let mut keys: Vec<(String, u64)> = Vec::new();
+    for e in &entries {
+        if let Ok(id) = e.content_id.parse::<u64>() {
+            if !keys.iter().any(|k| k.0 == e.kind && k.1 == id) {
+                keys.push((e.kind.clone(), id));
+            }
+        }
+    }
+    keys.truncate(60);
+    let found: Vec<Option<(String, Option<String>)>> = thread::scope(|s| {
+        let jobs: Vec<_> = keys
+            .iter()
+            .map(|(kind, id)| {
+                s.spawn(move || {
+                    if let Some(hit) = names().lock().unwrap().get(&(kind.clone(), *id)) {
+                        return Some(hit.clone());
+                    }
+                    let info = if kind == "anime" {
+                        api.anime_info(*id)
+                    } else {
+                        api.title_info(kind, *id)
+                    }?;
+                    names()
+                        .lock()
+                        .unwrap()
+                        .insert((kind.clone(), *id), info.clone());
+                    Some(info)
+                })
+            })
+            .collect();
+        jobs.into_iter().map(|j| j.join().ok().flatten()).collect()
+    });
+    let rows: Vec<HistoryOut> = entries
+        .into_iter()
+        .filter_map(|e| {
+            let id = e.content_id.parse::<u64>().ok()?;
+            let at = keys.iter().position(|k| k.0 == e.kind && k.1 == id)?;
+            let (show, poster) = found[at].clone().unwrap_or_else(|| {
+                (
+                    e.title
+                        .clone()
+                        .filter(|t| !t.is_empty())
+                        .unwrap_or_else(|| "untitled".into()),
+                    e.poster.clone(),
+                )
+            });
+            Some(HistoryOut {
+                id,
+                kind: e.kind,
+                show,
+                poster: poster_url(host, poster.as_deref()),
+                season: e.season.max(0) as u32,
+                episode: e.episode.max(0) as u32,
+                position: e.position,
+                duration: e.duration,
+                updated_at: e.updated_at,
+            })
+        })
+        .collect();
+    json!(rows)
+}
+
+type NameCache = Mutex<HashMap<(String, u64), (String, Option<String>)>>;
+
+fn names() -> &'static NameCache {
+    static NAMES: OnceLock<NameCache> = OnceLock::new();
+    NAMES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn with_subs(api: &Api, lang: &str, path: &str, mut streams: Vec<Stream>) -> Vec<Stream> {
@@ -764,5 +886,7 @@ fn stream_out(s: Stream, lang: &str) -> StreamOut {
             })
             .collect(),
         intro: s.intro,
+        outro: s.outro,
+        thumbs: s.thumbs.as_deref().map(|t| relay::subtitle(t, referer)),
     }
 }

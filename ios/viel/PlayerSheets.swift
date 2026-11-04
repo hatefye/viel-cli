@@ -262,6 +262,10 @@ struct SubtitlesSheet: View {
     @ObservedObject var model: PlayerModel
     let onClose: () -> Void
 
+    @EnvironmentObject private var core: Core
+
+    private let sizes: [(String, Double)] = [("Small", 0.85), ("Medium", 1), ("Large", 1.2), ("Huge", 1.45)]
+
     var body: some View {
         SheetFrame(onClose: onClose) {
             HStack(spacing: 14) {
@@ -275,8 +279,7 @@ struct SubtitlesSheet: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 4) {
                     option(label: "Off", tag: "No Subtitles", selected: !model.subsEnabled || model.subIndex == nil) {
-                        model.subsEnabled = false
-                        model.log("subtitles off")
+                        model.disableSubtitles()
                     }
                     if let stream = model.stream {
                         ForEach(stream.subs.indices, id: \.self) { index in
@@ -286,6 +289,43 @@ struct SubtitlesSheet: View {
                             }
                         }
                     }
+                    Divider().overlay(Theme.border).padding(.vertical, 10)
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Style").font(.system(size: 20, weight: .bold)).foregroundStyle(.white)
+                        HStack(spacing: 8) {
+                            ForEach(sizes, id: \.1) { size in
+                                Button {
+                                    Haptic.select()
+                                    core.settings.subSize = size.1
+                                } label: {
+                                    Text(size.0)
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundStyle(core.settings.subSize == size.1 ? .black : .white)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 9)
+                                }
+                                .buttonStyle(.glass)
+                                .tint(core.settings.subSize == size.1 ? .white : .clear)
+                            }
+                        }
+                        HStack {
+                            Text("Background box").font(.system(size: 17)).foregroundStyle(.white)
+                            Spacer()
+                            Toggle("", isOn: $core.settings.subBackground).labelsHidden().tint(.white)
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("Position").font(.system(size: 17)).foregroundStyle(.white)
+                                Spacer()
+                                Text(core.settings.subLift == 0 ? "Bottom" : "+\(Int(core.settings.subLift))").font(.system(size: 14)).foregroundStyle(Theme.muted)
+                            }
+                            Slider(value: $core.settings.subLift, in: 0...160, step: 8).tint(.white)
+                        }
+                        Text("The language you pick is remembered for this show.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.faint)
+                    }
+                    .padding(.horizontal, 6)
                 }
                 .padding(.horizontal, 16)
             }

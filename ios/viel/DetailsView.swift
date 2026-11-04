@@ -15,6 +15,7 @@ struct DetailsView: View {
     @State private var loading = false
     @State private var error: String?
     @State private var playing: Playable?
+    @State private var toast: String?
 
     init(title: Title, resume: Resume?) {
         self.title = title
@@ -143,7 +144,23 @@ struct DetailsView: View {
                     }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
+                    if isMovie {
+                        Button {
+                            Haptic.select()
+                            download(Playable(title: shown, episodes: [], index: -1, dub: false, startAt: nil, chain: []))
+                        } label: {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 20, weight: .medium))
+                                .frame(width: 50, height: 50)
+                        }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
+                    }
                 }
+            }
+            if let toast {
+                Text(toast).font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.match)
+                    .transition(.opacity)
             }
             if let resume, resume.resumeAt != nil {
                 Text("Continue · \(resume.label)").font(.system(size: 14)).foregroundStyle(Theme.muted)
@@ -218,6 +235,18 @@ struct DetailsView: View {
                             Haptic.tap()
                             play(index: index, startAt: current ? resume?.resumeAt : nil)
                         }
+                        .contextMenu {
+                            Button {
+                                download(Playable(title: active, episodes: list.episodes, index: index, dub: list.dub, startAt: nil, chain: chain))
+                            } label: {
+                                Label("Download", systemImage: "arrow.down.circle")
+                            }
+                            Button {
+                                Task { await markWatched(episode) }
+                            } label: {
+                                Label("Mark as watched", systemImage: "checkmark.circle")
+                            }
+                        }
                 }
                 if list.episodes.isEmpty {
                     Text("No episodes yet").foregroundStyle(Theme.muted).padding(.horizontal, 16)
@@ -259,6 +288,32 @@ struct DetailsView: View {
     private func play(index: Int, startAt: Double?) {
         guard let list else { return }
         playing = Playable(title: active, episodes: list.episodes, index: index, dub: list.dub, startAt: startAt, chain: chain)
+    }
+
+    private func download(_ item: Playable) {
+        Task {
+            do {
+                try await core.download(item)
+                flash("Added to downloads")
+            } catch {
+                flash(error.localizedDescription)
+            }
+        }
+    }
+
+    private func markWatched(_ episode: Episode) async {
+        let item = Playable(title: active, episodes: [episode], index: 0, dub: list?.dub ?? false, startAt: nil, chain: chain)
+        let length = Double((episode.runtime ?? details?.runtime ?? 24) * 60)
+        await core.saveProgress(item.progress(position: length, duration: length))
+        flash("Marked as watched")
+    }
+
+    private func flash(_ text: String) {
+        withAnimation(.smooth(duration: 0.25)) { toast = text }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            withAnimation(.smooth(duration: 0.25)) { toast = nil }
+        }
     }
 
     private func loadDetails() async {

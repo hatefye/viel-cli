@@ -1,5 +1,5 @@
 use crate::hls::{self, Part};
-use crate::{local, net};
+use crate::{local, net, offline};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -15,6 +15,10 @@ static SERVED: AtomicUsize = AtomicUsize::new(0);
 
 pub fn set_max_height(h: u32) {
     MAX_HEIGHT.store(h.max(240), Ordering::Relaxed);
+}
+
+pub fn max_height() -> u32 {
+    MAX_HEIGHT.load(Ordering::Relaxed)
 }
 
 fn lang() -> &'static Mutex<String> {
@@ -266,6 +270,16 @@ fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
         reply(out, status, kind, &body)?;
         return Ok(true);
     }
+    if route == "d" {
+        let (key, name) = file.split_once('/').unwrap_or((file, ""));
+        return match offline::path(key, name) {
+            Some(path) => serve_file(out, &path, req.range.as_deref()),
+            None => {
+                reply(out, "404 Not Found", "text/plain", b"not found")?;
+                Ok(true)
+            }
+        };
+    }
     let url = req.param("u").ok_or_else(|| anyhow!("missing url"))?;
     let referer = req.param("r");
     let what = match route {
@@ -350,6 +364,51 @@ fn spawn_fetch(tx: mpsc::Sender<Result<Vec<u8>>>, url: String, referer: Option<S
             .and_then(|resp| Ok(resp.bytes()?.to_vec()));
         let _ = tx.send(result);
     });
+}
+
+fn serve_file(out: &mut TcpStream, path: &std::path::Path, range: Option<&str>) -> Result<bool> {
+    let kind = match path.extension().and_then(|e| e.to_str()).unwrap_or("") {
+        "m3u8" => "application/vnd.apple.mpegurl",
+        "mp4" | "m4s" => "video/mp4",
+        "vtt" => "text/vtt; charset=utf-8",
+        "srt" | "ass" => "text/plain; charset=utf-8",
+        "webp" => "image/webp",
+        "jpg" | "jpeg" => "image/jpeg",
+        _ => "application/octet-stream",
+    };
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    let span = range.and_then(|r| r.strip_prefix("bytes=")).and_then(|r| {
+        let (a, b) = r.split_once('-')?;
+        let start: u64 = a.parse().ok()?;
+        let end: u64 = if b.is_empty() {
+            len.saturating_sub(1)
+        } else {
+            b.parse().ok()?
+        };
+        (start < len && end >= start).then_some((start, end.min(len - 1)))
+    });
+    match span {
+        Some((start, end)) => {
+            use std::io::Seek;
+            file.seek(io::SeekFrom::Start(start))?;
+            write!(
+                out,
+                "HTTP/1.1 206 Partial Content\r\nContent-Type: {kind}\r\nAccept-Ranges: bytes\r\nContent-Range: bytes {start}-{end}/{len}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+                end - start + 1
+            )?;
+            io::copy(&mut file.take(end - start + 1), out)?;
+        }
+        None => {
+            write!(
+                out,
+                "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nAccept-Ranges: bytes\r\nContent-Length: {len}\r\nConnection: keep-alive\r\n\r\n"
+            )?;
+            io::copy(&mut file, out)?;
+        }
+    }
+    out.flush()?;
+    Ok(true)
 }
 
 fn stream_segment(

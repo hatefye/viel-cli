@@ -17,10 +17,10 @@ struct PlayerView: View {
     @State private var hideTask: Task<Void, Never>?
     @State private var scrubbing = false
     @State private var sheet: PlayerSheet?
-    @State private var nextUp: Playable?
-    @State private var countdown = 0
+    @State private var dismissedNext = false
     @State private var flash: String?
     @State private var fill = false
+    @State private var preview: Double?
 
     init(item: Playable) {
         _current = State(initialValue: item)
@@ -48,6 +48,7 @@ struct PlayerView: View {
                 }
                 skipLayer(landscape)
                 nextLayer
+                previewLayer(landscape, size: geometry.size)
                 flashLayer
                 panelLayer(landscape, size: geometry.size)
             }
@@ -70,29 +71,22 @@ struct PlayerView: View {
         }
         .onChange(of: model.finished) { _, done in
             guard done else { return }
-            if core.settings.autoplay, let next = current.next {
-                nextUp = next
-                countdown = 5
+            if core.settings.autoplay, !dismissedNext, let next = current.next {
+                Task { await start(next) }
             } else {
                 dismiss()
             }
         }
-        .task(id: countdown) {
-            guard nextUp != nil, countdown > 0 else { return }
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            guard !Task.isCancelled, let next = nextUp else { return }
-            if countdown > 1 {
-                countdown -= 1
-            } else {
-                nextUp = nil
-                countdown = 0
-                await start(next)
-            }
-        }
+    }
+
+    private var nextUp: Playable? {
+        guard core.settings.autoplay, !dismissedNext, model.status == nil, model.duration > 0, let next = current.next else { return nil }
+        return model.duration - model.position <= 20 ? next : nil
     }
 
     private func start(_ item: Playable) async {
         current = item
+        dismissedNext = false
         show()
         await model.start(item, core: core)
     }
@@ -248,6 +242,8 @@ struct PlayerView: View {
             } scrubbing: { active in
                 scrubbing = active
                 if active { show() } else { scheduleHide() }
+            } preview: { time in
+                preview = time
             }
             Text(Format.clock(model.duration))
                 .font(.system(size: 13))
@@ -267,6 +263,9 @@ struct PlayerView: View {
             toolButton("captions.bubble.fill", "Subtitles") { sheet = .subtitles }
             toolButton("gearshape.fill", "Settings") { sheet = .settings }
             toolButton("pip.enter", "Picture in Picture") { model.togglePip() }
+            RoutePicker()
+                .frame(width: 46, height: 46)
+                .shadow(color: .black.opacity(0.5), radius: 3)
         }
     }
 
@@ -345,18 +344,21 @@ struct PlayerView: View {
     }
 
     private func subtitleLayer(_ landscape: Bool) -> some View {
-        VStack {
+        let style = core.settings
+        return VStack {
             Spacer()
             if let cue = model.cue, model.subsEnabled {
                 Text(cue)
-                    .font(.system(size: landscape ? 19 : 18, weight: .medium))
+                    .font(.system(size: (landscape ? 19 : 18) * style.subSize, weight: .medium))
                     .multilineTextAlignment(.center)
                     .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(style.subBackground ? 0 : 0.9), radius: 2)
+                    .shadow(color: .black.opacity(style.subBackground ? 0 : 0.9), radius: 1)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .background(Color.black.opacity(style.subBackground ? 0.5 : 0), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                     .padding(.horizontal, 24)
-                    .padding(.bottom, controls ? (landscape ? 72 : 118) : 28)
+                    .padding(.bottom, (controls ? (landscape ? 72 : 118) : 28) + style.subLift)
             }
         }
         .allowsHitTesting(false)
@@ -367,58 +369,94 @@ struct PlayerView: View {
             Spacer()
             HStack {
                 Spacer()
-                if model.showSkip {
+                if let skip = model.skipTarget {
                     Button {
                         Haptic.tap()
-                        model.skipIntro()
+                        model.skipMarker()
+                        poke()
                     } label: {
-                        HStack(spacing: 6) {
-                            Text("Skip Intro").font(.system(size: 13, weight: .semibold))
-                            Image(systemName: "play.fill").font(.system(size: 10))
+                        HStack(spacing: 8) {
+                            Text(skip == .intro ? "Skip Intro" : "Skip Outro").font(.system(size: 17, weight: .semibold))
+                            Image(systemName: "forward.fill").font(.system(size: 14, weight: .semibold))
                         }
                         .foregroundStyle(.black)
-                        .padding(.horizontal, 4)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
                     }
                     .buttonStyle(.glassProminent)
                     .tint(.white)
-                    .padding(.trailing, 16)
-                    .padding(.bottom, controls ? (landscape ? 68 : 118) : 28)
+                    .padding(.trailing, landscape ? 24 : 16)
+                    .padding(.bottom, controls ? (landscape ? 72 : 124) : 32)
                     .transition(.scale(scale: 0.9).combined(with: .opacity))
                 }
             }
         }
-        .animation(.smooth(duration: 0.25), value: model.showSkip)
+        .animation(.smooth(duration: 0.25), value: model.skipTarget)
     }
 
     private var nextLayer: some View {
         VStack {
             Spacer()
             if let next = nextUp {
+                let left = max(model.duration - model.position, 0)
                 HStack(spacing: 14) {
+                    ZStack {
+                        Circle().stroke(Color.white.opacity(0.2), lineWidth: 3)
+                        Circle()
+                            .trim(from: 0, to: 1 - min(left / 20, 1))
+                            .stroke(Color.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                            .rotationEffect(.degrees(-90))
+                        Text("\(Int(left.rounded(.up)))").font(.system(size: 15, weight: .bold)).monospacedDigit()
+                    }
+                    .frame(width: 40, height: 40)
+                    .animation(.linear(duration: 0.25), value: left)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Up next in \(countdown)s").font(.system(size: 12)).foregroundStyle(Theme.muted)
+                        Text("Next episode").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.muted)
                         Text(next.episode?.label(anime: next.isAnime) ?? "").font(.system(size: 15, weight: .semibold)).lineLimit(1)
                     }
                     Button("Play now") {
-                        nextUp = nil
-                        countdown = 0
+                        Haptic.tap()
                         Task { await start(next) }
                     }
                     .buttonStyle(.glassProminent)
                     .tint(.white)
                     .foregroundStyle(.black)
-                    Button("Cancel") {
-                        nextUp = nil
-                        countdown = 0
-                        dismiss()
+                    Button {
+                        dismissedNext = true
+                    } label: {
+                        Image(systemName: "xmark").font(.system(size: 15, weight: .semibold)).frame(width: 36, height: 36)
                     }
                     .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
                 }
                 .foregroundStyle(.white)
                 .padding(14)
-                .glassEffect(.regular, in: .rect(cornerRadius: 20))
-                .padding(.bottom, 30)
+                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                .padding(.bottom, controls ? 90 : 34)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+        }
+        .animation(.smooth(duration: 0.3), value: nextUp == nil)
+    }
+
+    @ViewBuilder
+    private func previewLayer(_ landscape: Bool, size: CGSize) -> some View {
+        if let preview, model.duration > 0 {
+            let width: CGFloat = 164
+            let inset: CGFloat = landscape ? 78 : 60
+            let span = size.width - inset * 2 - width
+            let x = inset + span * min(max(preview / model.duration, 0), 1)
+            VStack {
+                Spacer()
+                HStack(spacing: 0) {
+                    Spacer().frame(width: max(x, 8))
+                    ScrubPreview(model: model, time: preview, width: width)
+                    Spacer(minLength: 0)
+                }
+                .padding(.bottom, landscape ? 64 : 112)
+            }
+            .allowsHitTesting(false)
+            .transition(.opacity)
         }
     }
 
@@ -559,14 +597,59 @@ struct FinderView: View {
     }
 }
 
+struct RoutePicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let view = AVRoutePickerView()
+        view.tintColor = .white
+        view.activeTintColor = UIColor(Theme.accentHi)
+        view.prioritizesVideoDevices = true
+        return view
+    }
+
+    func updateUIView(_ view: AVRoutePickerView, context: Context) {}
+}
+
+struct ScrubPreview: View {
+    @ObservedObject var model: PlayerModel
+    let time: Double
+    let width: CGFloat
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        VStack(spacing: 6) {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: width, height: width * 9 / 16)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(Color.white.opacity(0.25), lineWidth: 1))
+            }
+            Text(Format.clock(time))
+                .font(.system(size: 15, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .glassEffect(.regular, in: .capsule)
+        }
+        .task(id: Int(time / 5)) {
+            image = await model.thumbnail(at: time)
+        }
+    }
+}
+
 struct Scrubber: View {
     let position: Double
     let duration: Double
     let onSeek: (Double) -> Void
     let scrubbing: (Bool) -> Void
+    var preview: (Double?) -> Void = { _ in }
 
     @State private var dragging = false
     @State private var dragFraction: Double = 0
+    @State private var tick = 0
 
     var body: some View {
         GeometryReader { geometry in
@@ -582,15 +665,26 @@ struct Scrubber: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
-                        if !dragging { scrubbing(true) }
+                        if !dragging {
+                            scrubbing(true)
+                            tick = Int(position / 30)
+                        }
                         dragging = true
                         dragFraction = min(max(value.location.x / width, 0), 1)
+                        let target = dragFraction * duration
+                        let step = Int(target / 30)
+                        if step != tick {
+                            tick = step
+                            Haptic.select()
+                        }
+                        preview(target)
                     }
                     .onEnded { value in
                         dragging = false
                         let fraction = min(max(value.location.x / width, 0), 1)
                         onSeek(fraction * duration)
                         scrubbing(false)
+                        preview(nil)
                     }
             )
         }
@@ -611,6 +705,7 @@ struct PlayerSurface: UIViewRepresentable {
         let view = PlayerLayerView()
         view.backgroundColor = .black
         view.playerLayer.player = model.player
+        model.player.allowsExternalPlayback = false
         view.playerLayer.videoGravity = fill ? .resizeAspectFill : .resizeAspect
         if AVPictureInPictureController.isPictureInPictureSupported(), let pip = AVPictureInPictureController(playerLayer: view.playerLayer) {
             pip.canStartPictureInPictureAutomaticallyFromInline = true
@@ -666,8 +761,9 @@ final class PlayerModel: ObservableObject {
     @Published var resolving = false
     @Published var failed = false
     @Published var cue: String?
-    @Published var showSkip = false
+    @Published var skipTarget: Marker?
     @Published var finished = false
+    @Published var thumbs: [ThumbCue] = []
     @Published var streams: [Stream] = []
     @Published var streamIndex = 0
     @Published var subIndex: Int?
@@ -693,7 +789,7 @@ final class PlayerModel: ObservableObject {
     private var watchdog: Task<Void, Never>?
     private var activityTask: Task<Void, Never>?
     private var lastReport = Date.distantPast
-    private var introSkipped = false
+    private var passed: Set<Marker> = []
     private var startAt: Double?
     private var generation = 0
     private var attachedAt = Date()
@@ -711,7 +807,8 @@ final class PlayerModel: ObservableObject {
             finished = false
             failed = false
             cue = nil
-            showSkip = false
+            skipTarget = nil
+            thumbs = []
             streams = []
             probes = []
             resolving = true
@@ -722,10 +819,10 @@ final class PlayerModel: ObservableObject {
             player.replaceCurrentItem(with: nil)
         }
         cues = []
-        introSkipped = false
+        passed = []
         startAt = item.startAt
-        log("start \(item.heading) from \(Int(item.startAt ?? 0))s")
-        pollActivity()
+        log("start \(item.heading) from \(Int(item.startAt ?? 0))s\(item.offline == nil ? "" : " (offline)")")
+        if item.offline == nil { pollActivity() }
         let started = Date()
         Task {
             let loaded: Details? = try? await core.get("details", ["kind": item.title.kind, "id": String(item.title.id)])
@@ -734,12 +831,17 @@ final class PlayerModel: ObservableObject {
             }
         }
         do {
-            let reply: PlayResponse = try await core.post("play", item.request)
+            let reply: PlayResponse = if let key = item.offline {
+                try await core.get("offline", ["key": key])
+            } else {
+                try await core.post("play", item.request)
+            }
             guard mine == generation else { return }
             let elapsed = Int(Date().timeIntervalSince(started) * 1000)
             log("resolved [\(reply.streams.map(\.source).joined(separator: ", "))] in \(elapsed)ms")
+            let ordered = Memory.order(reply.streams, for: item.title.key)
             await MainActor.run {
-                streams = reply.streams
+                streams = ordered
                 resolving = false
                 if reply.streams.isEmpty {
                     status = "No source has this one right now."
@@ -812,7 +914,13 @@ final class PlayerModel: ObservableObject {
         attach(index)
     }
 
-    func selectSubtitle(_ index: Int?) {
+    func disableSubtitles() {
+        subsEnabled = false
+        if let item { Memory.remember(subtitle: nil, for: item.title.key) }
+        log("subtitles off")
+    }
+
+    func selectSubtitle(_ index: Int?, remember: Bool = true) {
         subIndex = index
         cues = []
         cue = nil
@@ -820,6 +928,7 @@ final class PlayerModel: ObservableObject {
             if index == nil { log("subtitles off") }
             return
         }
+        if remember, let item { Memory.remember(subtitle: stream.subs[index].label, for: item.title.key) }
         let mine = generation
         let lang = stream.subs[index].label
         Task {
@@ -855,12 +964,47 @@ final class PlayerModel: ObservableObject {
         }
     }
 
-    func skipIntro() {
-        guard let intro = stream?.intro, intro.count == 2 else { return }
-        seek(to: intro[1])
-        introSkipped = true
-        showSkip = false
-        log("skipped intro")
+    func skipMarker() {
+        guard let target = skipTarget, let span = marker(target), span.count == 2 else { return }
+        seek(to: span[1])
+        passed.insert(target)
+        skipTarget = nil
+        log("skipped \(target)")
+    }
+
+    private func marker(_ which: Marker) -> [Double]? {
+        which == .intro ? stream?.intro : stream?.outro
+    }
+
+    func thumbnail(at time: Double) async -> UIImage? {
+        guard let cue = thumbs.first(where: { time >= $0.start && time < $0.end }) else { return nil }
+        guard let sprite = await SpriteStore.shared.image(for: cue.url) else { return nil }
+        let scale = sprite.scale
+        let rect = CGRect(x: cue.rect.minX * scale, y: cue.rect.minY * scale, width: cue.rect.width * scale, height: cue.rect.height * scale)
+        guard let cropped = sprite.cgImage?.cropping(to: rect) else { return nil }
+        return UIImage(cgImage: cropped)
+    }
+
+    private func loadThumbs(_ stream: Stream) {
+        thumbs = []
+        guard let core, let link = stream.thumbs, let url = URL(string: link) else { return }
+        let query = URLComponents(string: link)?.queryItems ?? []
+        guard let origin = query.first(where: { $0.name == "u" })?.value, let base = URL(string: origin) else { return }
+        let referer = query.first(where: { $0.name == "r" })?.value
+        let mine = generation
+        Task {
+            guard let reply = try? await URLSession.shared.data(from: url), (reply.1 as? HTTPURLResponse)?.statusCode == 200 else {
+                self.log("thumbnails unavailable")
+                return
+            }
+            let parsed = ThumbCue.parse(String(decoding: reply.0, as: UTF8.self), base: base) { absolute in
+                core.relayLink(absolute, referer: referer)
+            }
+            await MainActor.run {
+                if mine == self.generation { self.thumbs = parsed }
+            }
+            self.log("thumbnails: \(parsed.count) cues")
+        }
     }
 
     private func attach(_ index: Int) {
@@ -889,6 +1033,7 @@ final class PlayerModel: ObservableObject {
                     let ms = Int(Date().timeIntervalSince(self.attachedAt) * 1000)
                     let length = avItem.duration.seconds
                     self.log("ready in \(ms)ms, duration \(length.isFinite ? Int(length) : -1)s")
+                    if !stream.isOffline, let item = self.item { Memory.remember(source: stream.source, for: item.title.key) }
                     self.status = nil
                     self.stopActivity()
                     if let at = self.startAt, at > 0 {
@@ -937,8 +1082,25 @@ final class PlayerModel: ObservableObject {
             }
         }
 
-        selectSubtitle(stream.subs.isEmpty ? nil : 0)
+        chooseSubtitle(stream)
+        loadThumbs(stream)
         installObservers()
+    }
+
+    private func chooseSubtitle(_ stream: Stream) {
+        guard !stream.subs.isEmpty else {
+            selectSubtitle(nil, remember: false)
+            return
+        }
+        let wanted = item.flatMap { Memory.subtitleLanguage(for: $0.title.key) }
+        if wanted == "off" {
+            subsEnabled = false
+            selectSubtitle(nil, remember: false)
+            return
+        }
+        subsEnabled = true
+        let index = wanted.flatMap { label in stream.subs.firstIndex { $0.label == label } } ?? 0
+        selectSubtitle(index, remember: false)
     }
 
     private func errorSummary(_ avItem: AVPlayerItem) -> String {
@@ -999,11 +1161,16 @@ final class PlayerModel: ObservableObject {
         }
         let text = Subtitles.cue(in: cues, at: seconds)
         if text != cue { cue = text }
-        if let intro = stream?.intro, intro.count == 2, !introSkipped {
-            let visible = seconds >= intro[0] && seconds < intro[1] - 1
-            if visible != showSkip { showSkip = visible }
-            if seconds >= intro[1] { introSkipped = true }
+        var target: Marker?
+        for which in [Marker.intro, .outro] where !passed.contains(which) {
+            guard let span = marker(which), span.count == 2 else { continue }
+            if seconds >= span[1] {
+                passed.insert(which)
+            } else if seconds >= span[0] && seconds < span[1] - 1 {
+                target = which
+            }
         }
+        if target != skipTarget { skipTarget = target }
         if Date().timeIntervalSince(lastReport) >= 10 {
             report(seconds)
         }
@@ -1048,5 +1215,67 @@ final class PlayerModel: ObservableObject {
         activityTask?.cancel()
         activityTask = nil
         activity = nil
+    }
+}
+
+enum Marker: Hashable {
+    case intro, outro
+}
+
+struct ThumbCue {
+    let start: Double
+    let end: Double
+    let url: URL
+    let rect: CGRect
+
+    static func parse(_ text: String, base: URL, link: (String) -> URL?) -> [ThumbCue] {
+        var cues: [ThumbCue] = []
+        var pending: (Double, Double)?
+        for raw in text.replacingOccurrences(of: "\r", with: "").split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.contains("-->") {
+                let parts = line.components(separatedBy: "-->")
+                if parts.count == 2, let a = clock(parts[0]), let b = clock(parts[1]) { pending = (a, b) }
+                continue
+            }
+            guard let span = pending, !line.hasPrefix("WEBVTT"), !line.hasPrefix("NOTE") else { continue }
+            pending = nil
+            let pieces = line.components(separatedBy: "#xywh=")
+            guard pieces.count == 2 else { continue }
+            let box = pieces[1].split(separator: ",").compactMap { Double($0) }
+            guard box.count == 4, let absolute = URL(string: pieces[0], relativeTo: base)?.absoluteURL, let url = link(absolute.absoluteString) else { continue }
+            cues.append(ThumbCue(start: span.0, end: span.1, url: url, rect: CGRect(x: box[0], y: box[1], width: box[2], height: box[3])))
+        }
+        return cues
+    }
+
+    private static func clock(_ raw: String) -> Double? {
+        let parts = raw.trimmingCharacters(in: .whitespaces).split(separator: ":").compactMap { Double($0) }
+        guard !parts.isEmpty, parts.count <= 3 else { return nil }
+        return parts.reduce(0) { $0 * 60 + $1 }
+    }
+}
+
+actor SpriteStore {
+    static let shared = SpriteStore()
+
+    private var images: [URL: UIImage] = [:]
+    private var loading: [URL: Task<UIImage?, Never>] = [:]
+
+    func image(for url: URL) async -> UIImage? {
+        if let hit = images[url] { return hit }
+        if let task = loading[url] { return await task.value }
+        let task = Task<UIImage?, Never> {
+            guard let reply = try? await URLSession.shared.data(from: url) else { return nil }
+            return UIImage(data: reply.0)
+        }
+        loading[url] = task
+        let image = await task.value
+        loading[url] = nil
+        if let image {
+            if images.count > 24 { images.removeAll() }
+            images[url] = image
+        }
+        return image
     }
 }

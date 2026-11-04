@@ -234,6 +234,8 @@ pub struct Stream {
     pub start: Option<f64>,
     pub subs: Vec<Subtitle>,
     pub intro: Option<(f64, f64)>,
+    pub outro: Option<(f64, f64)>,
+    pub thumbs: Option<String>,
 }
 
 #[derive(Clone)]
@@ -548,6 +550,8 @@ impl Api {
             start,
             subs: Vec::new(),
             intro: None,
+            outro: None,
+            thumbs: None,
         })
     }
 
@@ -733,6 +737,11 @@ impl Api {
             .intro
             .filter(|i| i.end > i.start)
             .map(|i| (i.start, i.end));
+        let outro = body
+            .outro
+            .filter(|i| i.end > i.start)
+            .map(|i| (i.start, i.end));
+        let thumbs = body.thumbnails.filter(|t| t.starts_with("http"));
         Some(Stream {
             source: provider.to_string(),
             url: chosen.url,
@@ -742,6 +751,8 @@ impl Api {
             start: None,
             subs,
             intro,
+            outro,
+            thumbs,
         })
         .filter(playable)
     }
@@ -905,7 +916,7 @@ impl Api {
             .collect()
     }
 
-    fn title_info(&self, kind: &str, id: u64) -> Option<(String, Option<String>)> {
+    pub fn title_info(&self, kind: &str, id: u64) -> Option<(String, Option<String>)> {
         let slug = if kind == "tv" { "tv" } else { "movie" };
         let url = format!("{}/proxy/tmdb/{}/{}", self.host, slug, id);
         let resp: NameResp = self.client.get(url).send().ok()?.json().ok()?;
@@ -980,6 +991,9 @@ pub struct HistoryEntry {
     pub position: f64,
     pub duration: f64,
     pub title: Option<String>,
+    pub poster: Option<String>,
+    #[serde(default)]
+    pub updated_at: u64,
 }
 
 pub fn playable(stream: &Stream) -> bool {
@@ -1444,6 +1458,8 @@ struct AnimeSourcesResp {
     #[serde(default)]
     tracks: Vec<TrackRaw>,
     intro: Option<Span>,
+    outro: Option<Span>,
+    thumbnails: Option<String>,
 }
 
 #[derive(Deserialize)]

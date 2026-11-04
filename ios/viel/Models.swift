@@ -102,6 +102,18 @@ struct Resume: Decodable, Hashable, Identifiable {
         case resumeAt = "resume_at"
     }
 
+    init(id: UInt64, kind: String, show: String, poster: String?, season: Int, episode: Int, position: Double, duration: Double, resumeAt: Double?) {
+        self.id = id
+        self.kind = kind
+        self.show = show
+        self.poster = poster
+        self.season = season
+        self.episode = episode
+        self.position = position
+        self.duration = duration
+        self.resumeAt = resumeAt
+    }
+
     var key: String { "\(kind)-\(id)-\(season)-\(episode)" }
     var title: Title { Title.bare(id: id, kind: kind, name: show, poster: poster) }
     var fraction: Double { duration > 0 ? min(max(position / duration, 0), 1) : 0 }
@@ -176,6 +188,10 @@ struct Stream: Decodable, Hashable {
     let hls: Bool
     let subs: [Sub]
     let intro: [Double]?
+    let outro: [Double]?
+    let thumbs: String?
+
+    var isOffline: Bool { source == "offline" }
 
     var label: String { Stream.label(for: source) }
 
@@ -190,6 +206,7 @@ struct Stream: Decodable, Hashable {
         case "animekai": return "AnimeKai"
         case "kototv": return "KotoTV"
         case "luffy": return "LuffyTV"
+        case "offline": return "Downloaded"
         default: return source.capitalized
         }
     }
@@ -244,8 +261,28 @@ struct Playable: Hashable, Identifiable {
     let dub: Bool
     let startAt: Double?
     let chain: [Season]
+    var offline: String?
 
     var id: String { "\(title.key)-\(index)-\(dub)" }
+
+    var downloadKey: String {
+        guard let episode else { return "\(title.kind)-\(title.id)" }
+        return "\(title.kind)-\(title.id)-\(episode.season)-\(episode.numberText.replacingOccurrences(of: ".", with: "_"))\(dub ? "-dub" : "")"
+    }
+
+    var downloadMeta: DownloadMeta {
+        DownloadMeta(
+            name: title.name,
+            label: episode.map { $0.label(anime: isAnime) + (dub ? " (dub)" : "") } ?? (title.year.isEmpty ? title.kindLabel : title.year),
+            kind: title.kind,
+            id: title.id,
+            season: episode?.season ?? 0,
+            episode: episode?.number ?? 0,
+            poster: title.poster,
+            still: episode?.still,
+            dub: dub
+        )
+    }
     var isMovie: Bool { title.isMovie }
     var isAnime: Bool { title.isAnime }
     var episode: Episode? { episodes.indices.contains(index) ? episodes[index] : nil }
@@ -308,6 +345,109 @@ enum Format {
             return String(format: "%d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
         }
         return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+}
+
+struct DownloadMeta: Codable, Hashable {
+    let name: String
+    let label: String
+    let kind: String
+    let id: UInt64
+    let season: Int
+    let episode: Double
+    let poster: String?
+    let still: String?
+    let dub: Bool
+}
+
+struct DownloadRequest: Encodable {
+    let kind: String
+    let id: UInt64
+    let title: String
+    let season: Int
+    let episode: Double
+    let dub: Bool
+    let sources: [Source]
+    let key: String
+    let meta: DownloadMeta
+}
+
+struct Download: Decodable, Hashable, Identifiable {
+    let key: String
+    let meta: DownloadMeta?
+    let state: String
+    let source: String?
+    let done: Int
+    let total: Int
+    let bytes: UInt64
+    let error: String?
+
+    var id: String { key }
+    var isDone: Bool { state == "done" }
+    var isActive: Bool { state == "queued" || state == "fetching" }
+    var fraction: Double { total > 0 ? Double(done) / Double(total) : 0 }
+
+    var sizeText: String {
+        bytes >= 1_073_741_824 ? String(format: "%.1f GB", Double(bytes) / 1_073_741_824) : "\(bytes / 1_048_576) MB"
+    }
+
+    var statusText: String {
+        switch state {
+        case "queued": return "Waiting…"
+        case "fetching": return total > 0 ? "\(Int(fraction * 100))% · \(sizeText)" : "Starting…"
+        case "failed": return error ?? "Failed"
+        default: return sizeText
+        }
+    }
+
+    var playable: Playable? {
+        guard let meta else { return nil }
+        let title = Title.bare(id: meta.id, kind: meta.kind, name: meta.name, poster: meta.poster)
+        if meta.kind == "movie" {
+            return Playable(title: title, episodes: [], index: -1, dub: false, startAt: nil, chain: [], offline: key)
+        }
+        let episode = Episode(season: meta.season, number: meta.episode, name: meta.label, overview: "", still: meta.still, runtime: nil, sources: [])
+        return Playable(title: title, episodes: [episode], index: 0, dub: meta.dub, startAt: nil, chain: [], offline: key)
+    }
+}
+
+struct HistoryRow: Decodable, Hashable, Identifiable {
+    let id: UInt64
+    let kind: String
+    let show: String
+    let poster: String?
+    let season: Int
+    let episode: Int
+    let position: Double
+    let duration: Double
+    let updatedAt: UInt64
+
+    enum CodingKeys: String, CodingKey {
+        case id, kind, show, poster, season, episode, position, duration
+        case updatedAt = "updated_at"
+    }
+
+    var key: String { "\(kind)-\(id)-\(season)-\(episode)" }
+    var title: Title { Title.bare(id: id, kind: kind, name: show, poster: poster) }
+    var fraction: Double { duration > 0 ? min(max(position / duration, 0), 1) : 0 }
+    var finished: Bool { duration > 0 && duration - position < 30 }
+
+    var episodeLabel: String? {
+        switch kind {
+        case "tv": return "S\(season) · E\(episode)"
+        case "anime": return "Episode \(episode)"
+        default: return nil
+        }
+    }
+
+    var when: String {
+        guard updatedAt > 0 else { return "" }
+        let date = Date(timeIntervalSince1970: Double(updatedAt) / 1000)
+        return date.formatted(.relative(presentation: .named, unitsStyle: .abbreviated))
+    }
+
+    var resume: Resume {
+        Resume(id: id, kind: kind, show: show, poster: poster, season: season, episode: episode, position: position, duration: duration, resumeAt: (position > 5 && position < duration - 30) ? position : nil)
     }
 }
 

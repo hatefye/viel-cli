@@ -30,8 +30,10 @@ struct VielApp: App {
                 .tint(.white)
                 .onChange(of: phase) { _, value in
                     core.log("app", "scene \(value)")
-                    if value == .background {
-                        Task { await core.flushLogs() }
+                    switch value {
+                    case .background: core.enteredBackground()
+                    case .active: core.enteredForeground()
+                    default: break
                     }
                 }
         }

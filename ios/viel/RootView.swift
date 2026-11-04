@@ -161,8 +161,11 @@ struct RootView: View {
     }
 
     private func open(_ title: Title, play: Bool) {
+        let row = home?.resume.first { $0.kind == title.kind && $0.id == title.id }
         if play, title.isMovie {
-            playing = Playable(title: title, episodes: [], index: -1, dub: false, startAt: nil, chain: [])
+            playing = Playable(title: title, episodes: [], index: -1, dub: false, startAt: row?.resumeAt, chain: [])
+        } else if let row, row.resumeAt != nil || !title.isMovie {
+            resume = row
         } else {
             selected = title
         }

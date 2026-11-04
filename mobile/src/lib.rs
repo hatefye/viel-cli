@@ -11,11 +11,18 @@ fn text(ptr: *const c_char) -> Option<String> {
 }
 
 #[no_mangle]
-pub extern "C" fn viel_start(host: *const c_char, token: *const c_char) -> u16 {
+pub extern "C" fn viel_start(
+    host: *const c_char,
+    token: *const c_char,
+    downloads: *const c_char,
+) -> u16 {
     viel::local::configure(
         &text(host).unwrap_or_else(|| "https://viel.tv".into()),
         text(token),
     );
+    if let Some(dir) = text(downloads) {
+        viel::offline::set_dir(&dir);
+    }
     viel::relay::port()
 }
 

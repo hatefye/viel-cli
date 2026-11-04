@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-uint16_t viel_start(const char *host, const char *token);
+uint16_t viel_start(const char *host, const char *token, const char *downloads);
 void viel_set_token(const char *token);
 
 #endif

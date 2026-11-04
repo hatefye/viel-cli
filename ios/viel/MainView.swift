@@ -71,8 +71,11 @@ struct MyListView: View {
     @EnvironmentObject private var core: Core
     @ObservedObject private var watchlist = Watchlist.shared
     @State private var resume: [Resume] = []
+    @State private var downloads: [Download] = []
     @State private var selected: Title?
     @State private var resuming: Resume?
+    @State private var playing: Playable?
+    @State private var showHistory = false
 
     private let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
 
@@ -82,6 +85,12 @@ struct MyListView: View {
                 Theme.bg.ignoresSafeArea()
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 28) {
+                        if !downloads.isEmpty {
+                            DownloadsSection(downloads: downloads, onPlay: { playing = $0 }, onRemove: { key in
+                                downloads.removeAll { $0.key == key }
+                                Task { await core.removeDownload(key) }
+                            })
+                        }
                         if !resume.isEmpty {
                             Row(title: "Continue watching") {
                                 ForEach(resume, id: \.key) { row in
@@ -136,15 +145,34 @@ struct MyListView: View {
             }
             .navigationTitle("My List")
             .toolbarBackground(Theme.bg, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showHistory = true
+                    } label: {
+                        Image(systemName: "clock.arrow.circlepath")
+                    }
+                    .accessibilityLabel("History")
+                }
+            }
+            .navigationDestination(isPresented: $showHistory) { HistoryView() }
         }
         .task { await load() }
+        .task {
+            while !Task.isCancelled {
+                downloads = await core.downloads()
+                try? await Task.sleep(nanoseconds: downloads.contains(where: \.isActive) ? 1_000_000_000 : 5_000_000_000)
+            }
+        }
         .fullScreenCover(item: $selected) { DetailsView(title: $0, resume: nil).environmentObject(core) }
         .fullScreenCover(item: $resuming) { DetailsView(title: $0.title, resume: $0).environmentObject(core) }
+        .fullScreenCover(item: $playing) { PlayerView(item: $0).environmentObject(core) }
     }
 
     private func load() async {
         let home: HomeData? = try? await core.get("home")
         resume = home?.resume ?? []
+        downloads = await core.downloads()
     }
 
     private func remove(_ row: Resume) async {
