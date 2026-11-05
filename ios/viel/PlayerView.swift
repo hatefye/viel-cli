@@ -185,8 +185,14 @@ struct PlayerView: View {
 
     private var touchPad: some View {
         TouchPad(
-            onTap: { toggleControls() },
-            onDoubleTap: { right in skip(right ? skipSeconds : -skipSeconds) },
+            onTap: {
+                model.log("touch: tap (controls \(controls ? "on" : "off"))")
+                toggleControls()
+            },
+            onDoubleTap: { right in
+                model.log("touch: double \(right ? "right" : "left")")
+                skip(right ? skipSeconds : -skipSeconds)
+            },
             onHold: { down in
                 if down {
                     guard model.isPlaying, model.status == nil else { return }
@@ -204,6 +210,7 @@ struct PlayerView: View {
                 guard !boosting else { return }
                 switch phase {
                 case .began:
+                    model.log("touch: swipe \(right ? "volume" : "brightness")")
                     dragStart = right ? Double(SystemVolume.level) : Double(UIScreen.main.brightness)
                 case .changed:
                     guard let base = dragStart else { return }
@@ -750,7 +757,7 @@ struct TouchPad: UIViewRepresentable {
         double.numberOfTapsRequired = 2
         single.require(toFail: double)
         let hold = UILongPressGestureRecognizer(target: owner, action: #selector(Coordinator.held(_:)))
-        hold.minimumPressDuration = 0.45
+        hold.minimumPressDuration = 0.6
         let pan = UIPanGestureRecognizer(target: owner, action: #selector(Coordinator.panned(_:)))
         pan.maximumNumberOfTouches = 1
         let pinch = UIPinchGestureRecognizer(target: owner, action: #selector(Coordinator.pinched(_:)))
@@ -775,6 +782,8 @@ struct TouchPad: UIViewRepresentable {
         private var holding = false
         private var swiping = false
         private var swipeRight = false
+        private var pending = false
+        private var origin = CGPoint.zero
 
         init(pad: TouchPad) {
             self.pad = pad
@@ -807,21 +816,40 @@ struct TouchPad: UIViewRepresentable {
 
         @objc func panned(_ recognizer: UIPanGestureRecognizer) {
             guard let view = recognizer.view else { return }
+            let bounds = view.bounds
             switch recognizer.state {
             case .began:
-                let velocity = recognizer.velocity(in: view)
-                guard !holding, abs(velocity.y) > abs(velocity.x) else {
+                origin = recognizer.location(in: view)
+                let band = bounds.width * 0.3
+                let inside = origin.y > bounds.height * 0.18 && origin.y < bounds.height * 0.8
+                let edge = origin.x < band || origin.x > bounds.width - band
+                guard !holding, inside, edge else {
                     recognizer.isEnabled = false
                     recognizer.isEnabled = true
                     return
                 }
-                swiping = true
-                swipeRight = recognizer.location(in: view).x > view.bounds.midX
-                pad.onSwipe(swipeRight, 0, .began)
+                pending = true
+                swipeRight = origin.x > bounds.midX
             case .changed:
+                let shift = recognizer.translation(in: view)
+                if pending {
+                    guard abs(shift.y) > 24 else { return }
+                    guard abs(shift.y) > abs(shift.x) * 2 else {
+                        pending = false
+                        recognizer.isEnabled = false
+                        recognizer.isEnabled = true
+                        return
+                    }
+                    pending = false
+                    swiping = true
+                    recognizer.setTranslation(.zero, in: view)
+                    pad.onSwipe(swipeRight, 0, .began)
+                    return
+                }
                 guard swiping else { return }
-                pad.onSwipe(swipeRight, Double(-recognizer.translation(in: view).y / 240), .changed)
+                pad.onSwipe(swipeRight, Double(-shift.y / 220), .changed)
             case .ended, .cancelled, .failed:
+                pending = false
                 guard swiping else { return }
                 swiping = false
                 pad.onSwipe(swipeRight, 0, .ended)
