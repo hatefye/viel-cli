@@ -35,14 +35,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/release/viel.exe dist/
           Copy-Item mpv-dev/libmpv-2.dll dist/
-          Set-Content -Path dist/README.txt -Value @"
-viel for Windows
-
-Keep viel.exe and libmpv-2.dll in the same folder, then run viel.exe.
-Windows SmartScreen will warn the first time because the build is not signed:
-choose "More info" and then "Run anyway".
-Needs the Microsoft Edge WebView2 runtime, which Windows 11 and up-to-date Windows 10 already have.
-"@
+          Copy-Item desktop/README.txt dist/
           Compress-Archive -Path dist/* -DestinationPath viel-windows.zip -Force
 
       - uses: actions/upload-artifact@v4
