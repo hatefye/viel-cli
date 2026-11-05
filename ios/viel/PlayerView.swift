@@ -784,6 +784,7 @@ struct TouchPad: UIViewRepresentable {
         private var swipeRight = false
         private var pending = false
         private var origin = CGPoint.zero
+        private var touchDown = CGPoint.zero
 
         init(pad: TouchPad) {
             self.pad = pad
@@ -819,9 +820,9 @@ struct TouchPad: UIViewRepresentable {
             let bounds = view.bounds
             switch recognizer.state {
             case .began:
-                origin = recognizer.location(in: view)
-                let band = bounds.width * 0.3
-                let inside = origin.y > bounds.height * 0.18 && origin.y < bounds.height * 0.8
+                origin = touchDown
+                let band: CGFloat = 56
+                let inside = origin.y > bounds.height * 0.2 && origin.y < bounds.height * 0.78
                 let edge = origin.x < band || origin.x > bounds.width - band
                 guard !holding, inside, edge else {
                     recognizer.isEnabled = false
@@ -865,6 +866,13 @@ struct TouchPad: UIViewRepresentable {
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
             true
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            if gestureRecognizer is UIPanGestureRecognizer, let view = gestureRecognizer.view {
+                touchDown = touch.location(in: view)
+            }
+            return true
         }
     }
 }
