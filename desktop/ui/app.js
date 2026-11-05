@@ -1302,7 +1302,7 @@
     Player.init();
     invoke('downloads_active').then(rows => { rows.forEach(r => { App.active[r.key] = r; }); updateBadge(); }).catch(() => {});
     if (!App.boot.token) { showLogin(); return; }
-    api.get('me').then(r => { if (r && r.username) { App.user = r.username; $('#nav-user').textContent = App.user; } }).catch(() => {});
+    api.get('me').then(r => { if (r && r.username) { App.user = r.username; $('#nav-user').textContent = App.user; } else if (r && r.username === null) showLogin(); }).catch(() => {});
     setView('home');
   }
 
