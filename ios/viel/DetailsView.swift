@@ -171,8 +171,8 @@ struct DetailsView: View {
                 }
                 if let rating = shown.ratingText { Chip(rating) }
             }
-            GlassEffectContainer(spacing: 12) {
-                HStack(spacing: 12) {
+            GlassEffectContainer(spacing: 10) {
+                HStack(spacing: 10) {
                     Button {
                         Haptic.tap()
                         play(resuming: true)
@@ -180,18 +180,21 @@ struct DetailsView: View {
                         Label(playLabel, systemImage: "play.fill")
                             .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(.black)
+                            .lineLimit(1)
+                            .fixedSize()
                             .padding(.horizontal, 18)
                             .padding(.vertical, 7)
                     }
                     .buttonStyle(.glassProminent)
                     .tint(.white)
+                    .layoutPriority(1)
                     Button {
                         Haptic.select()
                         watchlist.toggle(shown)
                     } label: {
                         Image(systemName: watchlist.contains(shown) ? "checkmark" : "plus")
-                            .font(.system(size: 20, weight: .medium))
-                            .frame(width: 50, height: 50)
+                            .font(.system(size: 19, weight: .medium))
+                            .frame(width: 46, height: 46)
                             .contentTransition(.symbolEffect(.replace))
                     }
                     .buttonStyle(.glass)
@@ -202,8 +205,8 @@ struct DetailsView: View {
                             download(Playable(title: shown, episodes: [], index: -1, dub: false, startAt: nil, chain: []))
                         } label: {
                             Image(systemName: "arrow.down")
-                                .font(.system(size: 20, weight: .medium))
-                                .frame(width: 50, height: 50)
+                                .font(.system(size: 19, weight: .medium))
+                                .frame(width: 46, height: 46)
                         }
                         .buttonStyle(.glass)
                         .buttonBorderShape(.circle)
@@ -214,8 +217,8 @@ struct DetailsView: View {
                             openURL(trailer)
                         } label: {
                             Image(systemName: "play.rectangle")
-                                .font(.system(size: 20, weight: .medium))
-                                .frame(width: 50, height: 50)
+                                .font(.system(size: 19, weight: .medium))
+                                .frame(width: 46, height: 46)
                         }
                         .buttonStyle(.glass)
                         .buttonBorderShape(.circle)
@@ -224,8 +227,8 @@ struct DetailsView: View {
                     if let shareLink {
                         ShareLink(item: shareLink, subject: Text(shown.name)) {
                             Image(systemName: "square.and.arrow.up")
-                                .font(.system(size: 20, weight: .medium))
-                                .frame(width: 50, height: 50)
+                                .font(.system(size: 19, weight: .medium))
+                                .frame(width: 46, height: 46)
                         }
                         .buttonStyle(.glass)
                         .buttonBorderShape(.circle)

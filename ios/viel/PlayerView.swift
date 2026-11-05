@@ -20,11 +20,14 @@ struct PlayerView: View {
     @State private var sheet: PlayerSheet?
     @State private var dismissedNext = false
     @State private var flash: Flash?
+    @State private var flashShown = false
+    @State private var flashTask: Task<Void, Never>?
     @State private var fill = false
     @State private var preview: Double?
     @State private var locked = false
     @State private var unlockVisible = false
     @State private var level: Level?
+    @State private var levelShown = false
     @State private var levelTask: Task<Void, Never>?
     @State private var dragStart: Double?
     @State private var boosting = false
@@ -39,7 +42,7 @@ struct PlayerView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 PlayerSurface(model: model, fill: fill).ignoresSafeArea()
-                gestures(geometry.size)
+                touchPad
                 Group {
                     shade
                     pauseMeta(landscape, size: geometry.size)
@@ -65,8 +68,8 @@ struct PlayerView: View {
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .animation(.easeInOut(duration: 0.28), value: controls)
-        .animation(.smooth(duration: 0.2), value: flash)
-        .animation(.smooth(duration: 0.2), value: level)
+        .animation(.smooth(duration: 0.25), value: flashShown)
+        .animation(.smooth(duration: 0.25), value: levelShown)
         .animation(.smooth(duration: 0.25), value: locked)
         .animation(.smooth(duration: 0.25), value: unlockVisible)
         .animation(.smooth(duration: 0.25), value: model.isPlaying)
@@ -148,83 +151,90 @@ struct PlayerView: View {
         Haptic.tap()
         model.skip(seconds)
         let amount = Int(abs(seconds))
-        flash = Flash(text: seconds < 0 ? "−\(amount)s" : "+\(amount)s", right: seconds > 0)
+        showFlash(Flash(text: seconds < 0 ? "−\(amount)s" : "+\(amount)s", right: seconds > 0), for: 0.7)
         poke()
-        Task {
-            try? await Task.sleep(nanoseconds: 700_000_000)
-            if flash?.right == (seconds > 0) { flash = nil }
+    }
+
+    private func showFlash(_ value: Flash, for seconds: Double?) {
+        flash = value
+        flashShown = true
+        flashTask?.cancel()
+        guard let seconds else { return }
+        flashTask = Task {
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            flashShown = false
         }
     }
 
-    private func gestures(_ size: CGSize) -> some View {
-        HStack(spacing: 0) {
-            Color.clear.contentShape(Rectangle())
-                .onTapGesture(count: 2) { skip(-skipSeconds) }
-                .onTapGesture { toggleControls() }
-            Color.clear.contentShape(Rectangle())
-                .onTapGesture(count: 2) { skip(skipSeconds) }
-                .onTapGesture { toggleControls() }
+    private func hideFlash() {
+        flashTask?.cancel()
+        flashShown = false
+    }
+
+    private func showLevel(_ value: Level) {
+        level = value
+        levelShown = true
+        levelTask?.cancel()
+        levelTask = Task {
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
+            guard !Task.isCancelled else { return }
+            levelShown = false
         }
-        .ignoresSafeArea()
-        .allowsHitTesting(!locked)
-        .simultaneousGesture(
-            MagnifyGesture()
-                .onEnded { value in
-                    let wantsFill = value.magnification > 1
-                    if wantsFill != fill {
-                        Haptic.select()
-                        withAnimation(.smooth(duration: 0.3)) { fill = wantsFill }
-                        model.log(wantsFill ? "fill screen" : "fit screen")
-                    }
+    }
+
+    private var touchPad: some View {
+        TouchPad(
+            onTap: { toggleControls() },
+            onDoubleTap: { right in skip(right ? skipSeconds : -skipSeconds) },
+            onHold: { down in
+                if down {
+                    guard model.isPlaying, model.status == nil else { return }
+                    boosting = true
+                    Haptic.tap()
+                    model.boost(true)
+                    showFlash(Flash(text: "2× speed", right: nil), for: nil)
+                } else if boosting {
+                    boosting = false
+                    model.boost(false)
+                    hideFlash()
                 }
-        )
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 16)
-                .onChanged { value in
-                    guard !boosting, abs(value.translation.height) > abs(value.translation.width) else { return }
-                    let right = value.startLocation.x > size.width / 2
-                    if dragStart == nil {
-                        dragStart = right ? Double(SystemVolume.level) : Double(UIScreen.main.brightness)
-                    }
+            },
+            onSwipe: { right, shift, phase in
+                guard !boosting else { return }
+                switch phase {
+                case .began:
+                    dragStart = right ? Double(SystemVolume.level) : Double(UIScreen.main.brightness)
+                case .changed:
                     guard let base = dragStart else { return }
-                    let next = min(max(base - value.translation.height / 260, 0), 1)
+                    let next = min(max(base + shift, 0), 1)
                     if right {
                         SystemVolume.set(Float(next))
-                        level = Level(icon: next == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill", value: next, right: true)
+                        showLevel(Level(icon: next == 0 ? "speaker.slash.fill" : (next < 0.5 ? "speaker.wave.1.fill" : "speaker.wave.2.fill"), value: next, right: true))
                     } else {
                         UIScreen.main.brightness = next
-                        level = Level(icon: "sun.max.fill", value: next, right: false)
+                        showLevel(Level(icon: next < 0.4 ? "sun.min.fill" : "sun.max.fill", value: next, right: false))
                     }
-                }
-                .onEnded { _ in
+                case .ended:
                     dragStart = nil
                     levelTask?.cancel()
                     levelTask = Task {
-                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        try? await Task.sleep(nanoseconds: 600_000_000)
                         guard !Task.isCancelled else { return }
-                        level = nil
+                        levelShown = false
                     }
                 }
+            },
+            onPinch: { wantsFill in
+                if wantsFill != fill {
+                    Haptic.select()
+                    withAnimation(.smooth(duration: 0.3)) { fill = wantsFill }
+                    model.log(wantsFill ? "fill screen" : "fit screen")
+                }
+            }
         )
-        .simultaneousGesture(
-            LongPressGesture(minimumDuration: 0.45)
-                .sequenced(before: DragGesture(minimumDistance: 0))
-                .onChanged { value in
-                    if case .second = value, !boosting, model.isPlaying, model.status == nil {
-                        boosting = true
-                        Haptic.tap()
-                        model.boost(true)
-                        flash = Flash(text: "2× speed", right: nil)
-                    }
-                }
-                .onEnded { _ in
-                    if boosting {
-                        boosting = false
-                        model.boost(false)
-                        flash = nil
-                    }
-                }
-        )
+        .ignoresSafeArea()
+        .allowsHitTesting(!locked)
     }
 
     private func revealUnlock() {
@@ -276,25 +286,25 @@ struct PlayerView: View {
             HStack(spacing: 0) {
                 if level.right { Spacer() }
                 VStack(spacing: 10) {
-                    Image(systemName: level.icon).font(.system(size: 20, weight: .semibold))
+                    Image(systemName: level.icon).font(.system(size: 18, weight: .semibold)).frame(height: 22)
                     GeometryReader { geometry in
                         ZStack(alignment: .bottom) {
                             Capsule().fill(Color.white.opacity(0.25))
                             Capsule().fill(.white).frame(height: geometry.size.height * level.value)
                         }
                     }
-                    .frame(width: 5, height: 120)
-                    Text("\(Int((level.value * 100).rounded()))").font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                    .frame(width: 5, height: 110)
+                    Text("\(Int((level.value * 100).rounded()))").font(.system(size: 12, weight: .semibold)).monospacedDigit()
                 }
                 .foregroundStyle(.white)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 14)
-                .glassEffect(.regular, in: .rect(cornerRadius: 22))
-                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 12)
+                .glassEffect(.regular, in: .rect(cornerRadius: 20))
+                .padding(.horizontal, 28)
                 if !level.right { Spacer() }
             }
+            .opacity(levelShown ? 1 : 0)
             .allowsHitTesting(false)
-            .transition(.opacity)
         }
     }
 
@@ -508,8 +518,8 @@ struct PlayerView: View {
             .foregroundStyle(.white)
             .frame(width: width, alignment: .leading)
             .padding(.leading, landscape ? 24 : 16)
+            .padding(.top, landscape ? 80 : 68)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(.top, landscape ? 78 : 66)
             .allowsHitTesting(false)
             .transition(.opacity)
         }
@@ -664,13 +674,14 @@ struct PlayerView: View {
                     }
                 } else {
                     VStack {
-                        pill.padding(.top, 24)
+                        pill.padding(.top, 80)
                         Spacer()
                     }
                 }
             }
+            .opacity(flashShown ? 1 : 0)
+            .scaleEffect(flashShown ? 1 : 0.92)
             .allowsHitTesting(false)
-            .transition(.scale(scale: 0.9).combined(with: .opacity))
         }
     }
 
@@ -716,6 +727,118 @@ struct Level: Equatable {
     let icon: String
     let value: Double
     let right: Bool
+}
+
+enum SwipePhase {
+    case began, changed, ended
+}
+
+struct TouchPad: UIViewRepresentable {
+    let onTap: () -> Void
+    let onDoubleTap: (Bool) -> Void
+    let onHold: (Bool) -> Void
+    let onSwipe: (Bool, Double, SwipePhase) -> Void
+    let onPinch: (Bool) -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isMultipleTouchEnabled = true
+        let owner = context.coordinator
+        let single = UITapGestureRecognizer(target: owner, action: #selector(Coordinator.tapped(_:)))
+        let double = UITapGestureRecognizer(target: owner, action: #selector(Coordinator.doubleTapped(_:)))
+        double.numberOfTapsRequired = 2
+        single.require(toFail: double)
+        let hold = UILongPressGestureRecognizer(target: owner, action: #selector(Coordinator.held(_:)))
+        hold.minimumPressDuration = 0.45
+        let pan = UIPanGestureRecognizer(target: owner, action: #selector(Coordinator.panned(_:)))
+        pan.maximumNumberOfTouches = 1
+        let pinch = UIPinchGestureRecognizer(target: owner, action: #selector(Coordinator.pinched(_:)))
+        for recognizer in [single, double, hold, pan, pinch] as [UIGestureRecognizer] {
+            recognizer.delegate = owner
+            recognizer.cancelsTouchesInView = false
+            view.addGestureRecognizer(recognizer)
+        }
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.pad = self
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(pad: self)
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var pad: TouchPad
+        private var holding = false
+        private var swiping = false
+        private var swipeRight = false
+
+        init(pad: TouchPad) {
+            self.pad = pad
+        }
+
+        @objc func tapped(_ recognizer: UITapGestureRecognizer) {
+            pad.onTap()
+        }
+
+        @objc func doubleTapped(_ recognizer: UITapGestureRecognizer) {
+            guard let view = recognizer.view else { return }
+            pad.onDoubleTap(recognizer.location(in: view).x > view.bounds.midX)
+        }
+
+        @objc func held(_ recognizer: UILongPressGestureRecognizer) {
+            switch recognizer.state {
+            case .began:
+                guard !swiping else { return }
+                holding = true
+                pad.onHold(true)
+            case .ended, .cancelled, .failed:
+                if holding {
+                    holding = false
+                    pad.onHold(false)
+                }
+            default:
+                break
+            }
+        }
+
+        @objc func panned(_ recognizer: UIPanGestureRecognizer) {
+            guard let view = recognizer.view else { return }
+            switch recognizer.state {
+            case .began:
+                let velocity = recognizer.velocity(in: view)
+                guard !holding, abs(velocity.y) > abs(velocity.x) else {
+                    recognizer.isEnabled = false
+                    recognizer.isEnabled = true
+                    return
+                }
+                swiping = true
+                swipeRight = recognizer.location(in: view).x > view.bounds.midX
+                pad.onSwipe(swipeRight, 0, .began)
+            case .changed:
+                guard swiping else { return }
+                pad.onSwipe(swipeRight, Double(-recognizer.translation(in: view).y / 240), .changed)
+            case .ended, .cancelled, .failed:
+                guard swiping else { return }
+                swiping = false
+                pad.onSwipe(swipeRight, 0, .ended)
+            default:
+                break
+            }
+        }
+
+        @objc func pinched(_ recognizer: UIPinchGestureRecognizer) {
+            guard recognizer.state == .ended else { return }
+            pad.onPinch(recognizer.scale > 1)
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+    }
 }
 
 enum SystemVolume {
