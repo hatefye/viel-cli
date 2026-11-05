@@ -206,7 +206,6 @@ impl Player {
             ("force-window", "yes"),
             ("vo", "gpu-next,gpu"),
             ("hwdec", "auto-safe"),
-            ("gpu-context", "d3d11,auto"),
             ("background", "color"),
             ("background-color", "#000000"),
             ("sub-auto", "no"),
