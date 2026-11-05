@@ -47,6 +47,11 @@ struct AccountView: View {
                         .autocorrectionDisabled()
                     Toggle("Prefer dubbed anime", isOn: $core.settings.dub)
                     Toggle("Autoplay next episode", isOn: $core.settings.autoplay)
+                    Picker("Skip buttons", selection: $core.settings.skipSeconds) {
+                        ForEach([10, 15, 30], id: \.self) { seconds in
+                            Text("\(seconds) seconds").tag(seconds)
+                        }
+                    }
                 }
 
                 Section {
@@ -56,10 +61,11 @@ struct AccountView: View {
                         }
                     }
                     Toggle("Delete downloads after watching", isOn: $core.settings.autoDeleteWatched)
+                    Toggle("Wi-Fi only", isOn: $core.settings.wifiDownloads)
                 } header: {
                     Text("Downloads")
                 } footer: {
-                    Text("Downloads keep going in the background and show up under Files → viel → Downloads.")
+                    Text("Downloads keep going in the background and show up under Files → viel → Downloads. Wi-Fi only applies to downloads started after you turn it on.")
                 }
 
                 Section {

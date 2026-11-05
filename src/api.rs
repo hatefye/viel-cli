@@ -895,7 +895,10 @@ impl Api {
 
     pub fn save_progress(&self, update: &ProgressUpdate) -> Result<()> {
         let url = format!("{}/api/me/history", self.host);
-        self.authed(self.client.post(url)).json(update).send()?;
+        let resp = self.authed(self.client.post(url)).json(update).send()?;
+        if !resp.status().is_success() {
+            bail!("progress not saved ({})", resp.status());
+        }
         Ok(())
     }
 

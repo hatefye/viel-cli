@@ -1,6 +1,7 @@
 import AVFoundation
 import AVKit
 import Combine
+import MediaPlayer
 import SwiftUI
 
 enum PlayerSheet: String, Identifiable {
@@ -18,9 +19,15 @@ struct PlayerView: View {
     @State private var scrubbing = false
     @State private var sheet: PlayerSheet?
     @State private var dismissedNext = false
-    @State private var flash: String?
+    @State private var flash: Flash?
     @State private var fill = false
     @State private var preview: Double?
+    @State private var locked = false
+    @State private var unlockVisible = false
+    @State private var level: Level?
+    @State private var levelTask: Task<Void, Never>?
+    @State private var dragStart: Double?
+    @State private var boosting = false
 
     init(item: Playable) {
         _current = State(initialValue: item)
@@ -32,15 +39,14 @@ struct PlayerView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
                 PlayerSurface(model: model, fill: fill).ignoresSafeArea()
-                gestures
-                if controls {
-                    Group {
-                        shade
-                        pauseMeta(landscape)
-                        controlLayer(landscape)
-                    }
-                    .transition(.opacity)
+                gestures(geometry.size)
+                Group {
+                    shade
+                    pauseMeta(landscape, size: geometry.size)
+                    controlLayer(landscape)
                 }
+                .opacity(controls && !locked ? 1 : 0)
+                .allowsHitTesting(controls && !locked)
                 subtitleLayer(landscape)
                 if model.status != nil {
                     FinderView(item: current, model: model, retry: { Task { await start(current) } })
@@ -50,13 +56,19 @@ struct PlayerView: View {
                 nextLayer
                 previewLayer(landscape, size: geometry.size)
                 flashLayer
+                levelLayer
+                statsLayer(landscape)
                 panelLayer(landscape, size: geometry.size)
+                lockLayer
             }
         }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .animation(.easeInOut(duration: 0.28), value: controls)
         .animation(.smooth(duration: 0.2), value: flash)
+        .animation(.smooth(duration: 0.2), value: level)
+        .animation(.smooth(duration: 0.25), value: locked)
+        .animation(.smooth(duration: 0.25), value: unlockVisible)
         .animation(.smooth(duration: 0.25), value: model.isPlaying)
         .animation(.easeInOut(duration: 0.3), value: model.status == nil)
         .animation(.smooth(duration: 0.3), value: sheet)
@@ -74,13 +86,21 @@ struct PlayerView: View {
             if let key = current.offline, core.settings.autoDeleteWatched {
                 Task { await core.removeDownload(key) }
             }
-            if core.settings.autoplay, !dismissedNext, let next = current.next {
+            if let next = current.next, current.offline == nil {
+                let length = model.duration > 0 ? model.duration : Double((next.episode?.runtime ?? 24) * 60)
+                Task { await core.saveProgress(next.progress(position: 0, duration: length)) }
+            }
+            if model.sleepAtEnd {
+                dismiss()
+            } else if core.settings.autoplay, !dismissedNext, let next = current.next {
                 Task { await start(next) }
             } else {
                 dismiss()
             }
         }
     }
+
+    private var skipSeconds: Double { Double(core.settings.skipSeconds) }
 
     private var nextUp: Playable? {
         guard core.settings.autoplay, !dismissedNext, model.status == nil, model.duration > 0, let next = current.next else { return nil }
@@ -127,24 +147,26 @@ struct PlayerView: View {
     private func skip(_ seconds: Double) {
         Haptic.tap()
         model.skip(seconds)
-        flash = seconds < 0 ? "−10s" : "+10s"
+        let amount = Int(abs(seconds))
+        flash = Flash(text: seconds < 0 ? "−\(amount)s" : "+\(amount)s", right: seconds > 0)
         poke()
         Task {
             try? await Task.sleep(nanoseconds: 700_000_000)
-            flash = nil
+            if flash?.right == (seconds > 0) { flash = nil }
         }
     }
 
-    private var gestures: some View {
+    private func gestures(_ size: CGSize) -> some View {
         HStack(spacing: 0) {
             Color.clear.contentShape(Rectangle())
-                .onTapGesture(count: 2) { skip(-10) }
+                .onTapGesture(count: 2) { skip(-skipSeconds) }
                 .onTapGesture { toggleControls() }
             Color.clear.contentShape(Rectangle())
-                .onTapGesture(count: 2) { skip(10) }
+                .onTapGesture(count: 2) { skip(skipSeconds) }
                 .onTapGesture { toggleControls() }
         }
         .ignoresSafeArea()
+        .allowsHitTesting(!locked)
         .simultaneousGesture(
             MagnifyGesture()
                 .onEnded { value in
@@ -156,6 +178,147 @@ struct PlayerView: View {
                     }
                 }
         )
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 16)
+                .onChanged { value in
+                    guard !boosting, abs(value.translation.height) > abs(value.translation.width) else { return }
+                    let right = value.startLocation.x > size.width / 2
+                    if dragStart == nil {
+                        dragStart = right ? Double(SystemVolume.level) : Double(UIScreen.main.brightness)
+                    }
+                    guard let base = dragStart else { return }
+                    let next = min(max(base - value.translation.height / 260, 0), 1)
+                    if right {
+                        SystemVolume.set(Float(next))
+                        level = Level(icon: next == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill", value: next, right: true)
+                    } else {
+                        UIScreen.main.brightness = next
+                        level = Level(icon: "sun.max.fill", value: next, right: false)
+                    }
+                }
+                .onEnded { _ in
+                    dragStart = nil
+                    levelTask?.cancel()
+                    levelTask = Task {
+                        try? await Task.sleep(nanoseconds: 800_000_000)
+                        guard !Task.isCancelled else { return }
+                        level = nil
+                    }
+                }
+        )
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.45)
+                .sequenced(before: DragGesture(minimumDistance: 0))
+                .onChanged { value in
+                    if case .second = value, !boosting, model.isPlaying, model.status == nil {
+                        boosting = true
+                        Haptic.tap()
+                        model.boost(true)
+                        flash = Flash(text: "2× speed", right: nil)
+                    }
+                }
+                .onEnded { _ in
+                    if boosting {
+                        boosting = false
+                        model.boost(false)
+                        flash = nil
+                    }
+                }
+        )
+    }
+
+    private func revealUnlock() {
+        unlockVisible = true
+        hideTask?.cancel()
+        hideTask = Task {
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled else { return }
+            unlockVisible = false
+        }
+    }
+
+    @ViewBuilder
+    private var lockLayer: some View {
+        if locked {
+            ZStack {
+                Color.clear.contentShape(Rectangle())
+                    .ignoresSafeArea()
+                    .onTapGesture { revealUnlock() }
+                if unlockVisible {
+                    VStack {
+                        Spacer()
+                        Button {
+                            Haptic.tap()
+                            locked = false
+                            unlockVisible = false
+                            poke()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "lock.fill").font(.system(size: 15, weight: .semibold))
+                                Text("Unlock").font(.system(size: 16, weight: .semibold))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                        }
+                        .buttonStyle(.glass)
+                        .padding(.bottom, 36)
+                    }
+                    .transition(.opacity)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var levelLayer: some View {
+        if let level {
+            HStack(spacing: 0) {
+                if level.right { Spacer() }
+                VStack(spacing: 10) {
+                    Image(systemName: level.icon).font(.system(size: 20, weight: .semibold))
+                    GeometryReader { geometry in
+                        ZStack(alignment: .bottom) {
+                            Capsule().fill(Color.white.opacity(0.25))
+                            Capsule().fill(.white).frame(height: geometry.size.height * level.value)
+                        }
+                    }
+                    .frame(width: 5, height: 120)
+                    Text("\(Int((level.value * 100).rounded()))").font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .glassEffect(.regular, in: .rect(cornerRadius: 22))
+                .frame(maxWidth: .infinity)
+                if !level.right { Spacer() }
+            }
+            .allowsHitTesting(false)
+            .transition(.opacity)
+        }
+    }
+
+    @ViewBuilder
+    private func statsLayer(_ landscape: Bool) -> some View {
+        if model.showStats, !model.stats.isEmpty {
+            VStack {
+                HStack {
+                    Spacer()
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(model.stats, id: \.self) { line in
+                            Text(line).font(.system(size: 12, weight: .medium, design: .monospaced))
+                        }
+                    }
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .padding(.trailing, landscape ? 16 : 12)
+                    .padding(.top, landscape ? 64 : 60)
+                }
+                Spacer()
+            }
+            .allowsHitTesting(false)
+        }
     }
 
     private var shade: some View {
@@ -188,29 +351,42 @@ struct PlayerView: View {
             }
             .buttonStyle(.glass)
             .buttonBorderShape(.circle)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(current.title.name)
-                    .font(.system(size: 17, weight: .bold))
-                    .lineLimit(1)
-                if let tag = current.episodeTag {
-                    Text([tag, current.episode?.name ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.muted)
+            if model.isPlaying || model.status != nil {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(current.title.name)
+                        .font(.system(size: 17, weight: .bold))
                         .lineLimit(1)
+                    if let tag = current.episodeTag {
+                        Text([tag, current.episode?.name ?? ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.muted)
+                            .lineLimit(1)
+                    }
                 }
+                .shadow(color: .black.opacity(0.6), radius: 4)
+                .transition(.opacity)
             }
-            .shadow(color: .black.opacity(0.6), radius: 4)
             Spacer()
+            if model.sleepAt != nil || model.sleepAtEnd {
+                HStack(spacing: 5) {
+                    Image(systemName: "moon.zzz.fill").font(.system(size: 13, weight: .semibold))
+                    Text(model.sleepLabel).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                }
+                .foregroundStyle(Theme.soft)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .glassEffect(.regular, in: .capsule)
+            }
         }
         .foregroundStyle(.white)
         .padding(.horizontal, landscape ? 10 : 12)
-        .padding(.top, landscape ? 8 : 10)
+        .padding(.top, landscape ? 22 : 10)
     }
 
     private var centerButtons: some View {
         GlassEffectContainer(spacing: 28) {
             HStack(spacing: 28) {
-                Button { skip(-10) } label: { RoundIcon(icon: "gobackward.10", size: 56, weight: .regular) }
+                Button { skip(-skipSeconds) } label: { RoundIcon(icon: "gobackward.\(core.settings.skipSeconds)", size: 56, weight: .regular) }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
                 Button {
@@ -225,7 +401,7 @@ struct PlayerView: View {
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
-                Button { skip(10) } label: { RoundIcon(icon: "goforward.10", size: 56, weight: .regular) }
+                Button { skip(skipSeconds) } label: { RoundIcon(icon: "goforward.\(core.settings.skipSeconds)", size: 56, weight: .regular) }
                     .buttonStyle(.glass)
                     .buttonBorderShape(.circle)
             }
@@ -266,6 +442,12 @@ struct PlayerView: View {
             toolButton("captions.bubble.fill", "Subtitles") { sheet = .subtitles }
             toolButton("gearshape.fill", "Settings") { sheet = .settings }
             toolButton("pip.enter", "Picture in Picture") { model.togglePip() }
+            toolButton("lock.open", "Lock controls") {
+                locked = true
+                hideTask?.cancel()
+                controls = false
+                model.log("controls locked")
+            }
             RoutePicker()
                 .frame(width: 46, height: 46)
                 .shadow(color: .black.opacity(0.5), radius: 3)
@@ -309,10 +491,11 @@ struct PlayerView: View {
     }
 
     @ViewBuilder
-    private func pauseMeta(_ landscape: Bool) -> some View {
+    private func pauseMeta(_ landscape: Bool, size: CGSize) -> some View {
         if !model.isPlaying, model.status == nil {
+            let width = landscape ? min(400, max((size.width - 330) / 2, 220)) : size.width - 32
             VStack(alignment: .leading, spacing: 6) {
-                Logo(url: model.details?.logo, name: current.title.name, maxWidth: landscape ? 200 : 220, size: 26)
+                Logo(url: model.details?.logo, name: current.title.name, maxWidth: min(width, 220), size: 24)
                     .padding(.bottom, 6)
                 Text(metaLine).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.muted)
                 if let episode = current.episode {
@@ -323,11 +506,10 @@ struct PlayerView: View {
                 }
             }
             .foregroundStyle(.white)
-            .frame(maxWidth: landscape ? 360 : 400, alignment: .leading)
-            .padding(.horizontal, landscape ? 24 : 16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .padding(.top, landscape ? 56 : 60)
-            .padding(.bottom, landscape ? 80 : 130)
+            .frame(width: width, alignment: .leading)
+            .padding(.leading, landscape ? 24 : 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.top, landscape ? 78 : 66)
             .allowsHitTesting(false)
             .transition(.opacity)
         }
@@ -466,13 +648,29 @@ struct PlayerView: View {
     @ViewBuilder
     private var flashLayer: some View {
         if let flash {
-            Text(flash)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .glassEffect(.regular, in: .capsule)
-                .transition(.scale(scale: 0.9).combined(with: .opacity))
+            let pill = HStack(spacing: 6) {
+                if flash.right == nil { Image(systemName: "forward.fill").font(.system(size: 13, weight: .semibold)) }
+                Text(flash.text).font(.system(size: 17, weight: .semibold))
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .glassEffect(.regular, in: .capsule)
+            Group {
+                if let right = flash.right {
+                    HStack(spacing: 0) {
+                        pill.frame(maxWidth: .infinity).opacity(right ? 0 : 1)
+                        pill.frame(maxWidth: .infinity).opacity(right ? 1 : 0)
+                    }
+                } else {
+                    VStack {
+                        pill.padding(.top, 24)
+                        Spacer()
+                    }
+                }
+            }
+            .allowsHitTesting(false)
+            .transition(.scale(scale: 0.9).combined(with: .opacity))
         }
     }
 
@@ -502,10 +700,35 @@ struct PlayerView: View {
                 Task { await start(item) }
             }, onClose: { sheet = nil })
         case .settings:
-            SettingsSheet(model: model, onSubtitles: { sheet = .subtitles }, onClose: { sheet = nil })
+            SettingsSheet(model: model, item: current, onSubtitles: { sheet = .subtitles }, onClose: { sheet = nil })
         case .subtitles:
             SubtitlesSheet(model: model, onClose: { sheet = nil })
         }
+    }
+}
+
+struct Flash: Equatable {
+    let text: String
+    let right: Bool?
+}
+
+struct Level: Equatable {
+    let icon: String
+    let value: Double
+    let right: Bool
+}
+
+enum SystemVolume {
+    private static let view = MPVolumeView(frame: CGRect(x: -400, y: -400, width: 10, height: 10))
+
+    static var level: Float {
+        AVAudioSession.sharedInstance().outputVolume
+    }
+
+    static func set(_ value: Float) {
+        guard let slider = view.subviews.compactMap({ $0 as? UISlider }).first else { return }
+        slider.value = value
+        slider.sendActions(for: .valueChanged)
     }
 }
 
@@ -776,6 +999,10 @@ final class PlayerModel: ObservableObject {
     @Published var duration: Double = 0
     @Published var rate: Float = 1
     @Published var details: Details?
+    @Published var sleepAt: Date?
+    @Published var sleepAtEnd = false
+    @Published var showStats = false
+    @Published var stats: [String] = []
 
     var pip: AVPictureInPictureController?
 
@@ -795,6 +1022,8 @@ final class PlayerModel: ObservableObject {
     private var startAt: Double?
     private var generation = 0
     private var attachedAt = Date()
+    private var sleepTask: Task<Void, Never>?
+    private var lastStats = Date.distantPast
 
     func log(_ message: String) {
         core?.log("player", message)
@@ -870,6 +1099,7 @@ final class PlayerModel: ObservableObject {
             report(position)
         }
         log("stop at \(Int(position))s")
+        sleepTask?.cancel()
         generation += 1
         cleanup()
         stopActivity()
@@ -907,6 +1137,65 @@ final class PlayerModel: ObservableObject {
         rate = value
         if isPlaying { player.rate = value }
         log("rate \(value)")
+    }
+
+    func boost(_ on: Bool) {
+        guard player.currentItem != nil else { return }
+        player.rate = on ? max(rate * 2, 2) : rate
+        log(on ? "hold: 2x" : "hold released")
+    }
+
+    var sleepLabel: String {
+        if sleepAtEnd { return "End of episode" }
+        guard let sleepAt else { return "Off" }
+        let left = max(sleepAt.timeIntervalSinceNow, 0)
+        return left >= 60 ? "\(Int(left / 60) + (Int(left) % 60 > 0 ? 1 : 0))m" : "\(Int(left))s"
+    }
+
+    func setSleep(minutes: Int?, atEnd: Bool = false) {
+        sleepTask?.cancel()
+        sleepTask = nil
+        sleepAtEnd = atEnd
+        guard let minutes else {
+            sleepAt = nil
+            log(atEnd ? "sleep at end of episode" : "sleep timer off")
+            return
+        }
+        let when = Date().addingTimeInterval(Double(minutes) * 60)
+        sleepAt = when
+        log("sleep in \(minutes)m")
+        sleepTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(minutes) * 60_000_000_000)
+            guard !Task.isCancelled, let self else { return }
+            await MainActor.run {
+                self.player.pause()
+                self.sleepAt = nil
+                self.log("sleep timer fired")
+            }
+        }
+    }
+
+    private func refreshStats() {
+        guard showStats, Date().timeIntervalSince(lastStats) >= 1 else { return }
+        lastStats = Date()
+        var lines: [String] = []
+        lines.append("source   \(stream?.label ?? "—")\(stream?.hls == true ? " · hls" : "")")
+        if let item = player.currentItem {
+            let size = item.presentationSize
+            if size.width > 0 { lines.append("video    \(Int(size.width))×\(Int(size.height))") }
+            if let event = item.accessLog()?.events.last {
+                if event.indicatedBitrate > 0 { lines.append("bitrate  \(String(format: "%.1f", event.indicatedBitrate / 1_000_000)) Mbit/s") }
+                if event.observedBitrate > 0 { lines.append("network  \(String(format: "%.1f", event.observedBitrate / 1_000_000)) Mbit/s") }
+                lines.append("stalls   \(event.numberOfStalls) · dropped \(max(event.numberOfDroppedVideoFrames, 0))")
+            }
+            if let range = item.loadedTimeRanges.last?.timeRangeValue {
+                let ahead = range.end.seconds - position
+                if ahead.isFinite { lines.append("buffer   \(String(format: "%.1f", max(ahead, 0)))s") }
+            }
+        }
+        lines.append("rate     \(player.rate)x · \(Int(position))s")
+        if let sub = subIndex, let stream, stream.subs.indices.contains(sub) { lines.append("subs     \(stream.subs[sub].label) · \(cues.count) cues") }
+        stats = lines
     }
 
     func switchSource(_ index: Int) {
@@ -1197,6 +1486,7 @@ final class PlayerModel: ObservableObject {
         if Date().timeIntervalSince(lastReport) >= 10 {
             report(seconds)
         }
+        refreshStats()
     }
 
     private func report(_ seconds: Double) {

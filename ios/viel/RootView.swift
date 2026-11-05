@@ -39,6 +39,9 @@ struct RootView: View {
             .navigationDestination(for: ListPage.self) { ListView(page: $0) }
         }
         .task { await load() }
+        .onChange(of: selected) { _, value in if value == nil { Task { await load() } } }
+        .onChange(of: resume) { _, value in if value == nil { Task { await load() } } }
+        .onChange(of: playing) { _, value in if value == nil { Task { await load() } } }
         .fullScreenCover(item: $selected) { title in
             DetailsView(title: title, resume: nil)
                 .navigationTransition(.zoom(sourceID: title.key, in: zoom))

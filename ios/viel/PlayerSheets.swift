@@ -65,29 +65,18 @@ struct EpisodesSheet: View {
                     .font(.system(size: 28, weight: .bold))
                     .lineLimit(1)
                 Spacer()
-                if current.isAnime, current.chain.count > 1 {
-                    Menu {
-                        ForEach(current.chain, id: \.id) { entry in
-                            Button("\(entry.season). \(entry.title)") { chainId = entry.id }
-                        }
-                    } label: {
-                        seasonLabel("S\(current.chain.first(where: { $0.id == chainId })?.season ?? 1)")
-                    }
-                } else if !current.isAnime, seasonNumbers.count > 1 {
-                    Menu {
-                        ForEach(seasonNumbers, id: \.self) { number in
-                            Button("Season \(number)") { season = number }
-                        }
-                    } label: {
-                        seasonLabel("S\(season)")
-                    }
-                }
                 HStack(spacing: 8) {
                     Text("Auto next").font(.system(size: 17))
                     Toggle("", isOn: $core.settings.autoplay).labelsHidden().tint(Theme.accent)
                 }
             }
             .padding(.horizontal, 16)
+
+            if current.isAnime, current.chain.count > 1 {
+                seasonStrip(current.chain.map { SeasonChip(id: $0.id, label: "Season \($0.season)") }, selected: chainId) { chainId = $0 }
+            } else if !current.isAnime, seasonNumbers.count > 1 {
+                seasonStrip(seasonNumbers.map { SeasonChip(id: UInt64($0), label: "Season \($0)") }, selected: UInt64(season)) { season = Int($0) }
+            }
 
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(Theme.muted)
@@ -128,12 +117,30 @@ struct EpisodesSheet: View {
         }
     }
 
-    private func seasonLabel(_ text: String) -> some View {
-        HStack(spacing: 6) {
-            Text(text).font(.system(size: 18, weight: .bold))
-            Image(systemName: "chevron.down").font(.system(size: 13, weight: .semibold))
+    private func seasonStrip(_ entries: [SeasonChip], selected: UInt64, pick: @escaping (UInt64) -> Void) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(entries) { entry in
+                        Button {
+                            Haptic.select()
+                            pick(entry.id)
+                        } label: {
+                            Text(entry.label)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(entry.id == selected ? .black : .white)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.glass)
+                        .tint(entry.id == selected ? .white : .clear)
+                        .id(entry.id)
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+            .onAppear { proxy.scrollTo(selected, anchor: .center) }
         }
-        .foregroundStyle(.white)
     }
 
     private func loadChain(_ id: UInt64) async {
@@ -147,17 +154,25 @@ struct EpisodesSheet: View {
     }
 }
 
+struct SeasonChip: Identifiable {
+    let id: UInt64
+    let label: String
+}
+
 struct SettingsSheet: View {
     @ObservedObject var model: PlayerModel
+    let item: Playable
     let onSubtitles: () -> Void
     let onClose: () -> Void
 
     @EnvironmentObject private var core: Core
     @State private var tracks: [AudioTrack] = []
     @State private var note: String?
+    @State private var downloadNote: String?
 
     private let qualities = [720, 1080, 1440, 2160]
     private let rates: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]
+    private let sleeps = [15, 30, 45, 60, 90]
 
     var body: some View {
         SheetFrame(onClose: onClose) {
@@ -229,7 +244,39 @@ struct SettingsSheet: View {
                     } label: {
                         row(icon: "gauge.with.needle", label: "Playback speed", value: model.rate == 1 ? "Normal" : "\(model.rate)x")
                     }
+                    Menu {
+                        Button("Off") { model.setSleep(minutes: nil) }
+                        ForEach(sleeps, id: \.self) { minutes in
+                            Button("\(minutes) minutes") { model.setSleep(minutes: minutes) }
+                        }
+                        if !item.isMovie {
+                            Button("End of this episode") { model.setSleep(minutes: nil, atEnd: true) }
+                        }
+                    } label: {
+                        row(icon: "moon.zzz", label: "Sleep timer", value: model.sleepLabel)
+                    }
+                    if item.offline == nil {
+                        Button {
+                            Task {
+                                do {
+                                    try await core.download(item)
+                                    downloadNote = "Added to downloads"
+                                } catch {
+                                    downloadNote = error.localizedDescription
+                                }
+                            }
+                        } label: {
+                            row(icon: "arrow.down.circle", label: item.isMovie ? "Download this movie" : "Download this episode", value: downloadNote ?? "")
+                        }
+                    }
                     Divider().overlay(Theme.border)
+                    HStack(spacing: 14) {
+                        Image(systemName: "waveform.path.ecg").font(.system(size: 20)).foregroundStyle(Theme.soft).frame(width: 28)
+                        Text("Stats for nerds").font(.system(size: 20, weight: .semibold))
+                        Spacer()
+                        Toggle("", isOn: $model.showStats).labelsHidden().tint(.white)
+                    }
+                    .padding(.horizontal, 6)
                     HStack(spacing: 14) {
                         Image(systemName: "captions.bubble").font(.system(size: 20)).foregroundStyle(Theme.soft).frame(width: 28)
                         Text("Enable subtitles").font(.system(size: 20, weight: .semibold))

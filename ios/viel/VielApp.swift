@@ -13,6 +13,22 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         DownloadManager.shared.backgroundCompletion = completionHandler
         DownloadManager.shared.activate()
     }
+
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        if let item = options.shortcutItem {
+            Shortcuts.shared.pending = item.type
+        }
+        let config = UISceneConfiguration(name: nil, sessionRole: session.role)
+        config.delegateClass = SceneDelegate.self
+        return config
+    }
+}
+
+final class SceneDelegate: NSObject, UIWindowSceneDelegate {
+    func windowScene(_ windowScene: UIWindowScene, performActionFor item: UIApplicationShortcutItem, completionHandler: @escaping (Bool) -> Void) {
+        Shortcuts.shared.pending = item.type
+        completionHandler(true)
+    }
 }
 
 @main
@@ -41,6 +57,7 @@ struct VielApp: App {
                     default: break
                     }
                 }
+                .onAppear { Shortcuts.install() }
         }
     }
 }

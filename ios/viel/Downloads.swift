@@ -71,9 +71,11 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     }
 
     private func enqueue(_ plan: DownloadPlan, only: Set<String>?) {
+        let wifiOnly = Settings.load().wifiDownloads
         for part in plan.parts where only == nil || only!.contains(part.file) {
             guard let url = URL(string: part.url) else { continue }
             var request = URLRequest(url: url)
+            request.allowsCellularAccess = !wifiOnly
             request.setValue(agent, forHTTPHeaderField: "User-Agent")
             if let referer = plan.referer, !referer.isEmpty {
                 request.setValue(referer, forHTTPHeaderField: "Referer")

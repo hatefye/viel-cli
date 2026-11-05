@@ -1,40 +1,70 @@
 import SwiftUI
+import UIKit
 
 struct MainView: View {
     @EnvironmentObject private var core: Core
+    @ObservedObject private var shortcuts = Shortcuts.shared
+    @State private var tab = "home"
 
     var body: some View {
-        TabView {
-            Tab("Home", systemImage: "house") {
+        TabView(selection: $tab) {
+            Tab("Home", systemImage: "house", value: "home") {
                 RootView()
             }
-            Tab("Movies", systemImage: "film") {
+            Tab("Movies", systemImage: "film", value: "movies") {
                 NavigationStack {
                     ListView(page: ListPage(title: "Movies", path: "movie/popular"))
                 }
             }
-            Tab("Shows", systemImage: "tv") {
+            Tab("Shows", systemImage: "tv", value: "shows") {
                 NavigationStack {
                     ListView(page: ListPage(title: "Shows", path: "tv/popular"))
                 }
             }
-            Tab("Anime", systemImage: "sparkles") {
+            Tab("Anime", systemImage: "sparkles", value: "anime") {
                 NavigationStack {
                     ListView(page: ListPage(title: "Anime", path: "anime/trending"))
                 }
             }
-            Tab("My List", systemImage: "star") {
+            Tab("My List", systemImage: "star", value: "list") {
                 MyListView()
             }
-            Tab("Settings", systemImage: "gearshape") {
+            Tab("Settings", systemImage: "gearshape", value: "settings") {
                 AccountView(embedded: true)
             }
-            Tab("Search", systemImage: "magnifyingglass", role: .search) {
+            Tab("Search", systemImage: "magnifyingglass", value: "search", role: .search) {
                 SearchView(inTab: true)
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .tint(.white)
+        .onAppear { consume(shortcuts.pending) }
+        .onChange(of: shortcuts.pending) { _, value in consume(value) }
+    }
+
+    private func consume(_ action: String?) {
+        guard let action else { return }
+        switch action {
+        case Shortcuts.search: tab = "search"
+        case Shortcuts.list: tab = "list"
+        default: break
+        }
+        shortcuts.pending = nil
+    }
+}
+
+final class Shortcuts: ObservableObject {
+    static let shared = Shortcuts()
+    static let search = "tv.viel.search"
+    static let list = "tv.viel.list"
+
+    @Published var pending: String?
+
+    static func install() {
+        UIApplication.shared.shortcutItems = [
+            UIApplicationShortcutItem(type: search, localizedTitle: "Search", localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "magnifyingglass")),
+            UIApplicationShortcutItem(type: list, localizedTitle: "My List", localizedSubtitle: "Downloads and continue watching", icon: UIApplicationShortcutIcon(systemImageName: "star")),
+        ]
     }
 }
 
@@ -178,6 +208,9 @@ struct MyListView: View {
             .navigationDestination(isPresented: $showHistory) { HistoryView() }
         }
         .task { await load() }
+        .onChange(of: selected) { _, value in if value == nil { Task { await load() } } }
+        .onChange(of: resuming) { _, value in if value == nil { Task { await load() } } }
+        .onChange(of: playing) { _, value in if value == nil { Task { await load() } } }
         .task {
             while !Task.isCancelled {
                 downloads = await core.downloads()

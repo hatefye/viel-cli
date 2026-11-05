@@ -2,7 +2,7 @@ import SwiftUI
 
 struct DetailsView: View {
     let title: Title
-    let resume: Resume?
+    let given: Resume?
 
     @EnvironmentObject private var core: Core
     @ObservedObject private var watchlist = Watchlist.shared
@@ -18,11 +18,15 @@ struct DetailsView: View {
     @State private var toast: String?
     @State private var trailer: URL?
     @State private var watched: [String: HistoryRow] = [:]
+    @State private var done: Set<String> = []
+    @State private var downloaded: Set<String> = []
+    @State private var resume: Resume?
     @Environment(\.openURL) private var openURL
 
     init(title: Title, resume: Resume?) {
         self.title = title
-        self.resume = resume
+        given = resume
+        _resume = State(initialValue: resume)
         _seasonId = State(initialValue: title.seasons.first?.id ?? title.id)
         _season = State(initialValue: max(resume?.season ?? 1, 1))
     }
@@ -51,18 +55,39 @@ struct DetailsView: View {
         "\(isAnime ? 0 : episode.season)-\(Int(episode.number))"
     }
 
+    private func finished(_ episode: Episode) -> Bool {
+        let key = progressKey(episode)
+        return done.contains(key) || watched[key]?.finished == true
+    }
+
     private var nextUnwatched: Int? {
-        guard let list, !watched.isEmpty else { return nil }
+        guard let list, !(watched.isEmpty && done.isEmpty) else { return nil }
         let order = isAnime ? Array(list.episodes.indices) : list.episodes.indices.sorted { (list.episodes[$0].season, list.episodes[$0].number) < (list.episodes[$1].season, list.episodes[$1].number) }
-        guard let last = order.lastIndex(where: { watched[progressKey(list.episodes[$0])]?.finished == true }) else { return nil }
+        guard let last = order.lastIndex(where: { finished(list.episodes[$0]) }) else { return nil }
         return order.indices.contains(last + 1) ? order[last + 1] : nil
     }
 
     private var playLabel: String {
-        if resume?.resumeAt != nil { return "Resume" }
+        if let resume {
+            if resume.resumeAt != nil { return "Resume" }
+            if isMovie { return "Play" }
+            return isAnime ? "Play E\(resume.episode)" : "Play S\(resume.season) E\(resume.episode)"
+        }
         guard let list, let next = nextUnwatched, list.episodes.indices.contains(next) else { return "Play" }
         let episode = list.episodes[next]
         return isAnime ? "Play E\(episode.numberText)" : "Play S\(episode.season) E\(Int(episode.number))"
+    }
+
+    private var shareLink: URL? {
+        let path: String
+        if isMovie {
+            path = "movie/\(title.id)"
+        } else if isAnime {
+            path = "anime/\(title.id)"
+        } else {
+            path = "tv/\(title.id)"
+        }
+        return URL(string: "\(core.settings.host)/\(path)")
     }
 
     private var seasonLabel: String {
@@ -95,8 +120,11 @@ struct DetailsView: View {
             await loadDetails()
             if !isMovie {
                 await loadEpisodes()
-                await loadWatched()
             }
+            await refreshProgress()
+        }
+        .onChange(of: playing) { _, value in
+            if value == nil { Task { await refreshProgress() } }
         }
         .onChange(of: seasonId) { _, _ in Task { await loadEpisodes() } }
         .onChange(of: dub) { _, value in
@@ -193,6 +221,15 @@ struct DetailsView: View {
                         .buttonBorderShape(.circle)
                         .accessibilityLabel("Trailer")
                     }
+                    if let shareLink {
+                        ShareLink(item: shareLink, subject: Text(shown.name)) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.system(size: 20, weight: .medium))
+                                .frame(width: 50, height: 50)
+                        }
+                        .buttonStyle(.glass)
+                        .buttonBorderShape(.circle)
+                    }
                 }
             }
             if let toast {
@@ -259,6 +296,31 @@ struct DetailsView: View {
                     .buttonStyle(.glass)
                     .tint(dub ? Theme.accent : .white)
                 }
+                if list != nil, !visibleEpisodes.isEmpty {
+                    Menu {
+                        Button {
+                            downloadSeason(onlyUnwatched: false)
+                        } label: {
+                            Label(isAnime && chain.count <= 1 ? "Download all episodes" : "Download this season", systemImage: "arrow.down.circle")
+                        }
+                        Button {
+                            downloadSeason(onlyUnwatched: true)
+                        } label: {
+                            Label("Download unwatched", systemImage: "arrow.down.circle.dotted")
+                        }
+                        Button {
+                            Task { await markSeasonWatched() }
+                        } label: {
+                            Label("Mark all as watched", systemImage: "checkmark.circle")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 17, weight: .semibold))
+                            .frame(width: 42, height: 42)
+                    }
+                    .buttonStyle(.glass)
+                    .buttonBorderShape(.circle)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 14)
@@ -268,14 +330,15 @@ struct DetailsView: View {
                     let episode = list.episodes[index]
                     let current = resume.map { ($0.season == episode.season || isAnime) && $0.episode == Int(episode.number) } ?? false
                     let row = watched[progressKey(episode)]
-                    EpisodeRow(episode: episode, highlighted: current, runtime: episode.runtime ?? details?.runtime, subtitle: current ? resume?.label : nil, progress: row?.fraction, watched: row?.finished ?? false)
+                    let item = Playable(title: active, episodes: list.episodes, index: index, dub: list.dub, startAt: nil, chain: chain)
+                    EpisodeRow(episode: episode, highlighted: current, runtime: episode.runtime ?? details?.runtime, subtitle: current ? resume?.label : nil, progress: row?.fraction, watched: finished(episode), downloaded: downloaded.contains(item.downloadKey), download: { download(item) })
                         .onTapGesture {
                             Haptic.tap()
                             play(index: index, startAt: current ? resume?.resumeAt : nil)
                         }
                         .contextMenu {
                             Button {
-                                download(Playable(title: active, episodes: list.episodes, index: index, dub: list.dub, startAt: nil, chain: chain))
+                                download(item)
                             } label: {
                                 Label("Download", systemImage: "arrow.down.circle")
                             }
@@ -331,13 +394,42 @@ struct DetailsView: View {
     }
 
     private func download(_ item: Playable) {
+        guard !downloaded.contains(item.downloadKey) else {
+            flash("Already downloaded")
+            return
+        }
+        Haptic.select()
+        downloaded.insert(item.downloadKey)
         Task {
             do {
                 try await core.download(item)
                 flash("Added to downloads")
             } catch {
+                downloaded.remove(item.downloadKey)
                 flash(error.localizedDescription)
             }
+        }
+    }
+
+    private func downloadSeason(onlyUnwatched: Bool) {
+        guard let list else { return }
+        let picks = visibleEpisodes.filter { !onlyUnwatched || !finished(list.episodes[$0]) }
+        let items = picks.map { Playable(title: active, episodes: list.episodes, index: $0, dub: list.dub, startAt: nil, chain: chain) }.filter { !downloaded.contains($0.downloadKey) }
+        guard !items.isEmpty else {
+            flash(onlyUnwatched ? "Nothing left to download" : "Already downloaded")
+            return
+        }
+        Haptic.tap()
+        flash("Queuing \(items.count) episodes…")
+        Task {
+            var queued = 0
+            for item in items {
+                if (try? await core.download(item)) != nil {
+                    queued += 1
+                    downloaded.insert(item.downloadKey)
+                }
+            }
+            flash(queued == items.count ? "\(queued) episodes downloading" : "\(queued) of \(items.count) queued")
         }
     }
 
@@ -346,10 +438,33 @@ struct DetailsView: View {
         let length = Double((episode.runtime ?? details?.runtime ?? 24) * 60)
         await core.saveProgress(item.progress(position: length, duration: length))
         flash("Marked as watched")
-        await loadWatched()
+        await refreshProgress()
     }
 
-    private func loadWatched() async {
+    private func markSeasonWatched() async {
+        guard let list else { return }
+        for index in visibleEpisodes where !finished(list.episodes[index]) {
+            let episode = list.episodes[index]
+            let item = Playable(title: active, episodes: [episode], index: 0, dub: list.dub, startAt: nil, chain: chain)
+            let length = Double((episode.runtime ?? details?.runtime ?? 24) * 60)
+            await core.saveProgress(item.progress(position: length, duration: length))
+        }
+        flash("Marked as watched")
+        await refreshProgress()
+    }
+
+    private func refreshProgress() async {
+        downloaded = Set(await core.downloads().map(\.key))
+        if let row = await core.lastRow(kind: title.kind, id: active.id) {
+            let fresh = row.resume
+            if resume == nil || fresh.season != resume?.season || fresh.episode != resume?.episode || fresh.position != resume?.position {
+                resume = fresh
+            }
+            if !isAnime, fresh.season > 0, list?.episodes.contains(where: { $0.season == fresh.season }) == true, playing == nil, given == nil {
+                season = fresh.season
+            }
+        }
+        done = Memory.watched(for: active.key)
         guard core.username != nil else { return }
         var map: [String: HistoryRow] = [:]
         for row in await core.history() where row.kind == title.kind && row.id == active.id {
@@ -397,6 +512,8 @@ struct EpisodeRow: View {
     var subtitle: String?
     var progress: Double?
     var watched = false
+    var downloaded = false
+    var download: (() -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: 14) {
@@ -449,6 +566,17 @@ struct EpisodeRow: View {
                 }
             }
             Spacer(minLength: 0)
+            if let download {
+                Button(action: download) {
+                    Image(systemName: downloaded ? "checkmark.circle.fill" : "arrow.down.circle")
+                        .font(.system(size: 24, weight: .regular))
+                        .foregroundStyle(downloaded ? Theme.match : Theme.muted)
+                        .frame(width: 40, height: 40)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(downloaded ? "Downloaded" : "Download")
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

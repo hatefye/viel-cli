@@ -15,6 +15,8 @@ struct Settings: Codable {
     var autoDeleteWatched = false
     var airplay = false
     var audioLang = ""
+    var skipSeconds = 10
+    var wifiDownloads = false
 
     init() {}
 
@@ -32,6 +34,8 @@ struct Settings: Codable {
         autoDeleteWatched = try box.decodeIfPresent(Bool.self, forKey: .autoDeleteWatched) ?? autoDeleteWatched
         airplay = try box.decodeIfPresent(Bool.self, forKey: .airplay) ?? airplay
         audioLang = try box.decodeIfPresent(String.self, forKey: .audioLang) ?? audioLang
+        skipSeconds = try box.decodeIfPresent(Int.self, forKey: .skipSeconds) ?? skipSeconds
+        wifiDownloads = try box.decodeIfPresent(Bool.self, forKey: .wifiDownloads) ?? wifiDownloads
     }
 
     static func load() -> Settings {
@@ -222,8 +226,21 @@ final class Core: ObservableObject {
     }
 
     func saveProgress(_ progress: Progress) async {
+        Memory.remember(progress)
         guard username != nil else { return }
-        let _: Ok? = try? await post("progress", progress)
+        do {
+            let _: Ok = try await post("progress", progress)
+        } catch {
+            log("progress", "save failed for \(progress.kind) \(progress.id): \(error.localizedDescription)")
+        }
+    }
+
+    func lastRow(kind: String, id: UInt64) async -> HistoryRow? {
+        if username != nil, let row = await history().first(where: { $0.kind == kind && $0.id == id }) {
+            return row
+        }
+        guard let local = Memory.lastPlayed(for: "\(kind)-\(id)") else { return nil }
+        return HistoryRow(id: id, kind: kind, show: local.title, poster: nil, season: local.season, episode: local.episode, position: local.position, duration: local.duration, updatedAt: local.at)
     }
 
     func history() async -> [HistoryRow] {
@@ -332,6 +349,44 @@ enum Memory {
         var out = streams
         out.insert(out.remove(at: at), at: 0)
         return out
+    }
+
+    struct LastPlayed: Codable {
+        let title: String
+        let season: Int
+        let episode: Int
+        let position: Double
+        let duration: Double
+        let at: UInt64
+    }
+
+    static func lastPlayed(for title: String) -> LastPlayed? {
+        let all = UserDefaults.standard.dictionary(forKey: "lastplayed") as? [String: Data] ?? [:]
+        return all[title].flatMap { try? JSONDecoder().decode(LastPlayed.self, from: $0) }
+    }
+
+    static func remember(_ progress: Progress) {
+        let key = "\(progress.kind)-\(progress.id)"
+        var all = UserDefaults.standard.dictionary(forKey: "lastplayed") as? [String: Data] ?? [:]
+        let entry = LastPlayed(title: progress.title, season: progress.season, episode: progress.episode, position: progress.position, duration: progress.duration, at: UInt64(Date().timeIntervalSince1970 * 1000))
+        all[key] = try? JSONEncoder().encode(entry)
+        UserDefaults.standard.set(all, forKey: "lastplayed")
+        if progress.duration > 0, progress.duration - progress.position < 30 {
+            markWatched("\(progress.season)-\(progress.episode)", for: key)
+        }
+    }
+
+    static func watched(for title: String) -> Set<String> {
+        let all = UserDefaults.standard.dictionary(forKey: "watched") as? [String: [String]] ?? [:]
+        return Set(all[title] ?? [])
+    }
+
+    static func markWatched(_ episode: String, for title: String) {
+        var all = UserDefaults.standard.dictionary(forKey: "watched") as? [String: [String]] ?? [:]
+        var list = all[title] ?? []
+        if !list.contains(episode) { list.append(episode) }
+        all[title] = list
+        UserDefaults.standard.set(all, forKey: "watched")
     }
 
     static func subtitleLanguage(for title: String) -> String? {
