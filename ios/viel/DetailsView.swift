@@ -3,6 +3,7 @@ import SwiftUI
 struct DetailsView: View {
     let title: Title
     let given: Resume?
+    var autoplay = false
 
     @EnvironmentObject private var core: Core
     @ObservedObject private var watchlist = Watchlist.shared
@@ -23,9 +24,10 @@ struct DetailsView: View {
     @State private var resume: Resume?
     @Environment(\.openURL) private var openURL
 
-    init(title: Title, resume: Resume?) {
+    init(title: Title, resume: Resume?, autoplay: Bool = false) {
         self.title = title
         given = resume
+        self.autoplay = autoplay
         _resume = State(initialValue: resume)
         _seasonId = State(initialValue: title.seasons.first?.id ?? title.id)
         _season = State(initialValue: max(resume?.season ?? 1, 1))
@@ -120,6 +122,9 @@ struct DetailsView: View {
             await loadDetails()
             if !isMovie {
                 await loadEpisodes()
+            }
+            if autoplay {
+                play(resuming: true)
             }
             await refreshProgress()
         }

@@ -32,6 +32,17 @@
 	<dict/>
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>tv.viel.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>viel</string>
+			</array>
+		</dict>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

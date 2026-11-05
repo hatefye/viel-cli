@@ -10,6 +10,14 @@ struct RootView: View {
     @State private var playing: Playable?
     @State private var searching = false
     @State private var recommended: [Title] = []
+    @State private var linked: Linked?
+    @ObservedObject private var shortcuts = Shortcuts.shared
+
+    struct Linked: Identifiable, Equatable {
+        let title: Title
+        let resume: Resume?
+        var id: String { title.key + (resume.map { "-\($0.season)-\($0.episode)" } ?? "") }
+    }
 
     var body: some View {
         NavigationStack {
@@ -39,6 +47,14 @@ struct RootView: View {
             .navigationDestination(for: ListPage.self) { ListView(page: $0) }
         }
         .task { await load() }
+        .onAppear { if let link = shortcuts.link { Task { await follow(link) } } }
+        .onChange(of: shortcuts.link) { _, link in
+            if let link { Task { await follow(link) } }
+        }
+        .fullScreenCover(item: $linked) { item in
+            DetailsView(title: item.title, resume: item.resume, autoplay: true).environmentObject(core)
+        }
+        .onChange(of: linked) { _, value in if value == nil { Task { await load() } } }
         .onChange(of: selected) { _, value in if value == nil { Task { await load() } } }
         .onChange(of: resume) { _, value in if value == nil { Task { await load() } } }
         .onChange(of: playing) { _, value in if value == nil { Task { await load() } } }
@@ -182,6 +198,18 @@ struct RootView: View {
         } else {
             selected = title
         }
+    }
+
+    private func follow(_ link: DeepLink) async {
+        shortcuts.link = nil
+        selected = nil
+        resume = nil
+        playing = nil
+        guard let details: Details = try? await core.get("details", ["kind": link.kind, "id": String(link.id)]) else {
+            core.log("app", "deep link failed: no details for \(link.kind) \(link.id)")
+            return
+        }
+        linked = Linked(title: details.title, resume: link.resume)
     }
 
     private func load() async {

@@ -40,6 +40,13 @@ struct MainView: View {
         .tint(.white)
         .onAppear { consume(shortcuts.pending) }
         .onChange(of: shortcuts.pending) { _, value in consume(value) }
+        .onOpenURL { url in
+            core.log("app", "open url \(url.absoluteString)")
+            if let link = DeepLink(url) {
+                tab = "home"
+                shortcuts.link = link
+            }
+        }
     }
 
     private func consume(_ action: String?) {
@@ -53,12 +60,49 @@ struct MainView: View {
     }
 }
 
+struct DeepLink: Equatable {
+    let kind: String
+    let id: UInt64
+    let season: Int?
+    let episode: Int?
+
+    init?(_ url: URL) {
+        guard url.scheme == "viel" else { return nil }
+        var parts = [url.host ?? ""] + url.pathComponents.filter { $0 != "/" }
+        parts = parts.filter { !$0.isEmpty }
+        if parts.first == "open", let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "path" })?.value {
+            parts = path.split(separator: "/").map(String.init)
+        }
+        guard parts.count >= 2 else { return nil }
+        let kind = parts[0] == "movies" ? "movie" : parts[0]
+        guard ["movie", "tv", "anime"].contains(kind), let id = UInt64(parts[1]) else { return nil }
+        self.kind = kind
+        self.id = id
+        if kind == "tv" {
+            season = parts.count > 2 ? Int(parts[2]) : nil
+            episode = parts.count > 3 ? Int(parts[3]) : nil
+        } else if kind == "anime" {
+            season = nil
+            episode = parts.count > 2 ? Int(parts[2]) : nil
+        } else {
+            season = nil
+            episode = nil
+        }
+    }
+
+    var resume: Resume? {
+        guard let episode else { return nil }
+        return Resume(id: id, kind: kind, show: "", poster: nil, season: season ?? 0, episode: episode, position: 0, duration: 0, resumeAt: nil)
+    }
+}
+
 final class Shortcuts: ObservableObject {
     static let shared = Shortcuts()
     static let search = "tv.viel.search"
     static let list = "tv.viel.list"
 
     @Published var pending: String?
+    @Published var link: DeepLink?
 
     static func install() {
         UIApplication.shared.shortcutItems = [
