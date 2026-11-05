@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/staticsenju/viel-cli"
 
 [workspace]
-members = ["mobile"]
+members = ["mobile", "desktop"]
 resolver = "2"
 
 [lib]

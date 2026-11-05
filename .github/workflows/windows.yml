@@ -1,0 +1,56 @@
+name: windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Build
+        run: cargo build -p viel-desktop --release
+
+      - name: Fetch libmpv
+        shell: pwsh
+        run: |
+          $url = "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261105/mpv-dev-x86_64-20261105-git-3138fc8eea.7z"
+          Invoke-WebRequest -Uri $url -OutFile mpv-dev.7z
+          7z x mpv-dev.7z -ompv-dev | Out-Null
+          Get-ChildItem mpv-dev
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/viel.exe dist/
+          Copy-Item mpv-dev/libmpv-2.dll dist/
+          Set-Content -Path dist/README.txt -Value @"
+viel for Windows
+
+Keep viel.exe and libmpv-2.dll in the same folder, then run viel.exe.
+Windows SmartScreen will warn the first time because the build is not signed:
+choose "More info" and then "Run anyway".
+Needs the Microsoft Edge WebView2 runtime, which Windows 11 and up-to-date Windows 10 already have.
+"@
+          Compress-Archive -Path dist/* -DestinationPath viel-windows.zip -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: viel-windows
+          path: viel-windows.zip
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: viel-windows.zip

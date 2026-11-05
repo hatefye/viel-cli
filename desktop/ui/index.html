@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>viel</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="titlebar" data-tauri-drag-region>
+  <div class="tb-left" data-tauri-drag-region>
+    <svg class="tb-logo" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="112" fill="#000"/><path d="M158 148 L256 366 L354 148" fill="none" stroke="#dc2626" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span data-tauri-drag-region>viel</span>
+  </div>
+  <div class="tb-right">
+    <button class="tb-btn" data-win="minimize" aria-label="Minimize"><svg viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" stroke-width="1"/></svg></button>
+    <button class="tb-btn" data-win="maximize" aria-label="Maximize"><svg viewBox="0 0 10 10"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg></button>
+    <button class="tb-btn tb-close" data-win="close" aria-label="Close"><svg viewBox="0 0 10 10"><path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1.1"/></svg></button>
+  </div>
+</div>
+
+<nav id="side">
+  <button class="nav" data-view="home"><i class="ic" data-icon="home"></i><span>Home</span></button>
+  <button class="nav" data-view="search"><i class="ic" data-icon="search"></i><span>Search</span></button>
+  <button class="nav" data-view="list"><i class="ic" data-icon="bookmark"></i><span>My List</span></button>
+  <button class="nav" data-view="history"><i class="ic" data-icon="clock"></i><span>History</span></button>
+  <button class="nav" data-view="downloads"><i class="ic" data-icon="download"></i><span>Downloads</span><b class="badge" id="dl-badge" hidden></b></button>
+  <div class="nav-gap"></div>
+  <button class="nav" data-view="settings"><i class="ic" data-icon="sliders"></i><span>Settings</span></button>
+  <button class="nav user" data-view="account"><i class="ic" data-icon="user"></i><span id="nav-user">Account</span></button>
+</nav>
+
+<main id="view" tabindex="-1"></main>
+
+<section id="details" class="sheet" hidden></section>
+<section id="player" hidden>
+  <div id="pl-shade"></div>
+  <div id="pl-top" class="pl-bar">
+    <button class="rb" id="pl-back" aria-label="Back"><i class="ic" data-icon="back"></i></button>
+    <div class="pl-title" data-tauri-drag-region>
+      <div class="pl-name" id="pl-name"></div>
+      <div class="pl-sub" id="pl-sub"></div>
+    </div>
+    <div class="pl-top-right">
+      <span class="pill mono" id="pl-source"></span>
+      <button class="rb" id="pl-episodes" aria-label="Episodes" title="Episodes"><i class="ic" data-icon="list"></i></button>
+      <button class="rb" id="pl-gear" aria-label="Settings" title="Settings"><i class="ic" data-icon="sliders"></i></button>
+    </div>
+  </div>
+  <div id="pl-center">
+    <div id="pl-flash"></div>
+    <div id="pl-spinner" class="spinner" hidden></div>
+    <div id="pl-status" hidden></div>
+  </div>
+  <div id="pl-skip" class="glass-btn" hidden></div>
+  <div id="pl-next" class="glass-card" hidden></div>
+  <div id="pl-bottom" class="pl-bar">
+    <div id="pl-scrub">
+      <div class="track"><div class="buf"></div><div class="fill"></div><div class="knob"></div></div>
+      <div class="hover-time" hidden></div>
+    </div>
+    <div class="pl-row">
+      <button class="rb" id="pl-play" aria-label="Play"><i class="ic" data-icon="play"></i></button>
+      <button class="rb" id="pl-rew" aria-label="Back"><i class="ic" data-icon="rew"></i><b class="skipnum"></b></button>
+      <button class="rb" id="pl-ffw" aria-label="Forward"><i class="ic" data-icon="ffw"></i><b class="skipnum"></b></button>
+      <div class="vol">
+        <button class="rb" id="pl-mute" aria-label="Mute"><i class="ic" data-icon="vol"></i></button>
+        <input type="range" id="pl-vol" min="0" max="100" value="100">
+      </div>
+      <span class="pl-time"><span id="pl-pos">0:00</span><span class="sep">/</span><span id="pl-dur">0:00</span></span>
+      <div class="grow"></div>
+      <button class="rb txt" id="pl-speed" title="Speed">1×</button>
+      <button class="rb" id="pl-cc" aria-label="Subtitles" title="Subtitles"><i class="ic" data-icon="cc"></i></button>
+      <button class="rb" id="pl-audio" aria-label="Audio" title="Audio"><i class="ic" data-icon="audio"></i></button>
+      <button class="rb" id="pl-quality" aria-label="Quality" title="Quality"><i class="ic" data-icon="quality"></i></button>
+      <button class="rb" id="pl-nextbtn" aria-label="Next episode" title="Next episode"><i class="ic" data-icon="next"></i></button>
+      <button class="rb" id="pl-mini" aria-label="Mini player" title="Mini player"><i class="ic" data-icon="pip"></i></button>
+      <button class="rb" id="pl-full" aria-label="Fullscreen" title="Fullscreen"><i class="ic" data-icon="full"></i></button>
+    </div>
+  </div>
+  <div id="pl-stats" class="glass-card mono" hidden></div>
+  <div id="pl-menu" class="menu glass-card" hidden></div>
+  <aside id="pl-panel" class="glass-card" hidden></aside>
+</section>
+
+<section id="login" hidden>
+  <div class="login-card glass-card">
+    <svg class="login-logo" viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="112" fill="#000"/><path d="M158 148 L256 366 L354 148" fill="none" stroke="#dc2626" stroke-width="52" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <h1>Sign in to viel</h1>
+    <p class="muted">Same account as the website and the iPhone app.</p>
+    <form id="login-form">
+      <input name="username" placeholder="Username" autocomplete="username" required>
+      <input name="password" type="password" placeholder="Password" autocomplete="current-password" required>
+      <div class="login-err" id="login-err"></div>
+      <button type="submit" class="btn primary wide">Sign in</button>
+      <button type="button" class="btn ghost wide" id="login-register">Create an account</button>
+    </form>
+  </div>
+</section>
+
+<div id="toast"></div>
+<div id="ctx" class="menu glass-card" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
