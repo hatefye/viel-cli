@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreSpotlight
 import SwiftUI
 import UIKit
 import UserNotifications
@@ -54,6 +55,7 @@ final class SceneDelegate: NSObject, UIWindowSceneDelegate {
 struct VielApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @StateObject private var core = Core.shared
+    @StateObject private var lock = AppLock.shared
     @Environment(\.scenePhase) private var phase
 
     init() {
@@ -68,15 +70,32 @@ struct VielApp: App {
                 .environmentObject(core)
                 .preferredColorScheme(.dark)
                 .tint(.white)
+                .overlay {
+                    if lock.locked {
+                        LockScreen(lock: lock).transition(.opacity)
+                    }
+                }
                 .onChange(of: phase) { _, value in
                     core.log("app", "scene \(value)")
                     switch value {
-                    case .background: core.enteredBackground()
-                    case .active: core.enteredForeground()
+                    case .background:
+                        core.enteredBackground()
+                        lock.background()
+                    case .active:
+                        core.enteredForeground()
+                        lock.foreground(enabled: core.settings.appLock)
                     default: break
                     }
                 }
-                .onAppear { Shortcuts.install() }
+                .onAppear {
+                    Shortcuts.install()
+                    lock.launch(enabled: core.settings.appLock)
+                }
+                .onContinueUserActivity(CSSearchableItemActionType) { activity in
+                    guard let raw = activity.userInfo?[CSSearchableItemActivityIdentifier] as? String, let url = URL(string: raw), let link = DeepLink(url) else { return }
+                    Shortcuts.shared.pending = Shortcuts.home
+                    Shortcuts.shared.link = link
+                }
         }
     }
 }

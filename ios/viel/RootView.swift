@@ -51,6 +51,14 @@ struct RootView: View {
         .onChange(of: shortcuts.link) { _, link in
             if let link { Task { await follow(link) } }
         }
+        .onChange(of: shortcuts.resumeAsk) { _, _ in
+            Task {
+                if home == nil { await load() }
+                if let row = home?.resume.first {
+                    resume = row
+                }
+            }
+        }
         .fullScreenCover(item: $linked) { item in
             DetailsView(title: item.title, resume: item.resume, autoplay: true).environmentObject(core)
         }

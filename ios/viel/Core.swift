@@ -21,6 +21,8 @@ struct Settings: Codable {
     var episodeAlerts = false
     var subDelay = 0.0
     var backgroundAudio = false
+    var appLock = false
+    var privateMode = false
 
     init() {}
 
@@ -44,6 +46,8 @@ struct Settings: Codable {
         episodeAlerts = try box.decodeIfPresent(Bool.self, forKey: .episodeAlerts) ?? episodeAlerts
         subDelay = try box.decodeIfPresent(Double.self, forKey: .subDelay) ?? subDelay
         backgroundAudio = try box.decodeIfPresent(Bool.self, forKey: .backgroundAudio) ?? backgroundAudio
+        appLock = try box.decodeIfPresent(Bool.self, forKey: .appLock) ?? appLock
+        privateMode = try box.decodeIfPresent(Bool.self, forKey: .privateMode) ?? privateMode
     }
 
     static func load() -> Settings {
@@ -234,6 +238,7 @@ final class Core: ObservableObject {
     }
 
     func saveProgress(_ progress: Progress) async {
+        guard !settings.privateMode else { return }
         Memory.remember(progress)
         guard username != nil else { return }
         do {

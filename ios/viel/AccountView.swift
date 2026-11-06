@@ -79,6 +79,15 @@ struct AccountView: View {
                 }
 
                 Section {
+                    Toggle("Require Face ID to open", isOn: $core.settings.appLock)
+                    Toggle("Private mode", isOn: $core.settings.privateMode)
+                } header: {
+                    Text("Privacy")
+                } footer: {
+                    Text("Private mode keeps what you watch out of history and Continue Watching until you turn it off.")
+                }
+
+                Section {
                     Toggle("Stream to AirPlay devices", isOn: $core.settings.airplay)
                 } header: {
                     Text("AirPlay")

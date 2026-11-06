@@ -2,6 +2,9 @@ import SwiftUI
 
 enum ReleaseNotes {
     static let current: [(String, String, String)] = [
+        ("faceid", "Face ID lock and private mode", "Both under Settings → Privacy. Private mode keeps what you watch out of history."),
+        ("chart.bar", "Your stats", "Hours watched, streaks and most watched, from the chart button in My List. Shareable."),
+        ("mic", "Siri and Spotlight", "Say \"Resume on viel\", or find titles from My List in iPhone search."),
         ("speaker.wave.2", "Background audio", "Turn it on under Playback and the sound keeps going with the screen off, with lock screen controls."),
         ("film.stack", "Collections", "Movies that belong to a saga show the whole run on their page, in order."),
         ("arrow.down.circle", "Downloads are MP4 files", "Episodes and movies save as a single video file you can open from Files or share."),

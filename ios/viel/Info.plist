@@ -22,6 +22,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Unlocks viel when you have asked for it to be locked.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Lets AirPlay devices on your Wi-Fi fetch the video from this phone.</string>
 	<key>UIFileSharingEnabled</key>

@@ -6,7 +6,10 @@ struct MainView: View {
     @ObservedObject private var shortcuts = Shortcuts.shared
     @State private var tab = "home"
     @State private var notes = false
+    @State private var release: AppRelease?
+    @State private var showRelease = false
     @AppStorage("seenBuild") private var seenBuild = ""
+    @Environment(\.openURL) private var openURL
 
     var body: some View {
         TabView(selection: $tab) {
@@ -47,6 +50,19 @@ struct MainView: View {
             } else if seenBuild != core.build, !ReleaseNotes.current.isEmpty {
                 notes = true
             }
+            Task {
+                if let found = await Updates.check(core: core) {
+                    release = found
+                    showRelease = true
+                }
+            }
+        }
+        .alert("viel \(release?.version ?? "") is available", isPresented: $showRelease, presenting: release) { found in
+            Button("Download") { openURL(URL(string: found.url ?? "https://viel.tv/desktop") ?? URL(string: "https://viel.tv/desktop")!) }
+            Button("Skip this version") { Updates.skip(found.version) }
+            Button("Later", role: .cancel) {}
+        } message: { found in
+            Text(found.notes ?? "Install it with Sideloadly the same way as before.")
         }
         .sheet(isPresented: $notes, onDismiss: { seenBuild = core.build }) {
             WhatsNewView(build: core.build).environmentObject(core)
@@ -68,6 +84,9 @@ struct MainView: View {
         case Shortcuts.search: tab = "search"
         case Shortcuts.list: tab = "list"
         case Shortcuts.home: tab = "home"
+        case Shortcuts.resume:
+            tab = "home"
+            shortcuts.resumeAsk += 1
         default: break
         }
         shortcuts.pending = nil
@@ -115,9 +134,11 @@ final class Shortcuts: ObservableObject {
     static let search = "tv.viel.search"
     static let list = "tv.viel.list"
     static let home = "tv.viel.home"
+    static let resume = "tv.viel.resume"
 
     @Published var pending: String?
     @Published var link: DeepLink?
+    @Published var resumeAsk = 0
 
     static func install() {
         UIApplication.shared.shortcutItems = [
@@ -167,6 +188,7 @@ final class Watchlist: ObservableObject {
         }
         items = remote + localOnly
         persist()
+        Spotlight.index(items)
     }
 
     private func persist() {
@@ -186,6 +208,7 @@ struct MyListView: View {
     @State private var playing: Playable?
     @State private var showHistory = false
     @State private var upcoming: [Upcoming] = []
+    @State private var showStats = false
 
     private let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
 
@@ -269,6 +292,14 @@ struct MyListView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
+                        showStats = true
+                    } label: {
+                        Image(systemName: "chart.bar")
+                    }
+                    .accessibilityLabel("Your stats")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
                         showHistory = true
                     } label: {
                         Image(systemName: "clock.arrow.circlepath")
@@ -277,6 +308,7 @@ struct MyListView: View {
                 }
             }
             .navigationDestination(isPresented: $showHistory) { HistoryView() }
+            .sheet(isPresented: $showStats) { StatsView().environmentObject(core) }
         }
         .task { await load() }
         .onChange(of: selected) { _, value in if value == nil { Task { await load() } } }
