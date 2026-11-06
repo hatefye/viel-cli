@@ -306,6 +306,10 @@ struct Playable: Hashable, Identifiable {
         Playable(title: title, episodes: episodes, index: index, dub: dub, startAt: nil, chain: chain)
     }
 
+    func resuming(at position: Double) -> Playable {
+        Playable(title: title, episodes: episodes, index: index, dub: dub, startAt: position > 10 ? position : startAt, chain: chain, offline: offline)
+    }
+
     var request: PlayRequest {
         PlayRequest(
             kind: title.kind,

@@ -53,7 +53,7 @@ struct PlayerView: View {
                 .allowsHitTesting(controls && !locked)
                 subtitleLayer(landscape)
                 if model.status != nil {
-                    FinderView(item: current, model: model, retry: { Task { await start(current) } })
+                    FinderView(item: current, model: model, retry: { Task { await start(current.resuming(at: model.position)) } })
                         .transition(.opacity)
                 }
                 skipLayer(landscape)
@@ -1216,14 +1216,16 @@ final class PlayerModel: ObservableObject {
     private var attachedAt = Date()
     private var sleepTask: Task<Void, Never>?
     private var lastStats = Date.distantPast
+    private var refreshes = 0
 
     func log(_ message: String) {
         core?.log("player", message)
     }
 
-    func start(_ item: Playable, core: Core) async {
+    func start(_ item: Playable, core: Core, refreshing: Bool = false) async {
         self.item = item
         self.core = core
+        if !refreshing { refreshes = 0 }
         generation += 1
         let mine = generation
         await MainActor.run {
@@ -1547,7 +1549,7 @@ final class PlayerModel: ObservableObject {
                     self.player.playImmediately(atRate: self.rate)
                 case .failed:
                     self.log("item failed: \(avItem.error?.localizedDescription ?? "unknown") \(self.errorSummary(avItem))")
-                    self.failover("\(stream.label) failed")
+                    if !self.refresh("\(stream.label) failed") { self.failover("\(stream.label) failed") }
                 default:
                     break
                 }
@@ -1557,8 +1559,9 @@ final class PlayerModel: ObservableObject {
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: .AVPlayerItemFailedToPlayToEndTime, object: avItem, queue: .main) { [weak self] note in
             let error = note.userInfo?[AVPlayerItemFailedToPlayToEndTimeErrorKey] as? Error
-            self?.log("failed to play to end: \(error?.localizedDescription ?? "unknown")")
-            self?.failover("\(stream.label) dropped")
+            guard let self else { return }
+            self.log("failed to play to end: \(error?.localizedDescription ?? "unknown")")
+            if !self.refresh("\(stream.label) dropped") { self.failover("\(stream.label) dropped") }
         })
         observers.append(center.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: avItem, queue: .main) { [weak self] _ in
             guard let self else { return }
@@ -1611,6 +1614,16 @@ final class PlayerModel: ObservableObject {
         guard let event = avItem.errorLog()?.events.last else { return "" }
         let host = event.uri.flatMap { URL(string: $0)?.host } ?? ""
         return "[\(event.errorStatusCode) \(event.errorComment ?? "") \(host)]"
+    }
+
+    private func refresh(_ reason: String) -> Bool {
+        guard let item, let core, item.offline == nil, refreshes < 2 else { return false }
+        guard Date().timeIntervalSince(attachedAt) > 90, position > 10 else { return false }
+        refreshes += 1
+        let at = position
+        log("refresh: \(reason) after \(Int(Date().timeIntervalSince(attachedAt)))s, resuming at \(Int(at))s")
+        Task { await start(item.resuming(at: at), core: core, refreshing: true) }
+        return true
     }
 
     private func failover(_ reason: String) {
