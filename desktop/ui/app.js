@@ -216,7 +216,7 @@
     clearTimeout(heroTimer);
     if (S.heroRotate && heroItems.length > 1) heroTimer = setTimeout(() => { if (gen === heroGen && !document.hidden) { heroIdx = (heroIdx + 1) % heroItems.length; renderHero(); } }, 9000);
     const pending = heroItems.filter(t => t.logo === undefined && t.kind);
-    if (pending.length) Promise.all(pending.map(t => detailsFor(t).then(d => { if (d) Object.assign(t, { logo: d.logo || null, overview: t.overview || d.overview, runtime: d.runtime, season_count: d.season_count, genres: d.genres }); else t.logo = null; }))).then(() => { if (gen === heroGen) renderHero(); });
+    if (pending.length) Promise.all(pending.map(t => detailsFor(t).then(d => { if (d) Object.assign(t, { logo: d.logo || null, backdrop: t.backdrop || d.backdrop, overview: (t.overview && !/^\d+ episodes$/.test(t.overview)) ? t.overview : (d.overview || t.overview), runtime: d.runtime, season_count: d.season_count, genres: d.genres }); else t.logo = null; }))).then(() => { if (gen === heroGen) renderHero(); });
   }
   async function detailsFor(t) {
     const k = tkey(t);
