@@ -215,7 +215,8 @@
     $$('[data-info]', heroBox).forEach(b => b.onclick = () => openInfo(heroItems[Number(b.dataset.info)]));
     clearTimeout(heroTimer);
     if (S.heroRotate && heroItems.length > 1) heroTimer = setTimeout(() => { if (gen === heroGen && !document.hidden) { heroIdx = (heroIdx + 1) % heroItems.length; renderHero(); } }, 9000);
-    heroItems.forEach((t, i) => { if (t.logo === undefined && t.kind) detailsFor(t).then(d => { if (gen !== heroGen || !d) return; Object.assign(t, { logo: d.logo || null, overview: t.overview || d.overview, runtime: d.runtime, season_count: d.season_count, genres: d.genres }); if (i === heroIdx) renderHero(); }); });
+    const pending = heroItems.filter(t => t.logo === undefined && t.kind);
+    if (pending.length) Promise.all(pending.map(t => detailsFor(t).then(d => { if (d) Object.assign(t, { logo: d.logo || null, overview: t.overview || d.overview, runtime: d.runtime, season_count: d.season_count, genres: d.genres }); else t.logo = null; }))).then(() => { if (gen === heroGen) renderHero(); });
   }
   async function detailsFor(t) {
     const k = tkey(t);
@@ -629,7 +630,9 @@
   function modal(title) {
     const wrap = el(`<div class="vs-backdrop"><div class="vs-card" role="dialog"><div class="vs-head"><h2 class="vs-title">${esc(title)}</h2><button class="vs-x" aria-label="Close">${I.x}</button></div><div class="vs-body"></div></div></div>`);
     document.body.appendChild(wrap);
-    const close = () => { wrap.classList.remove('open'); setTimeout(() => wrap.remove(), 250); };
+    const onKey = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    window.addEventListener('keydown', onKey, true);
+    const close = () => { wrap.classList.remove('open'); window.removeEventListener('keydown', onKey, true); setTimeout(() => wrap.remove(), 250); };
     wrap.addEventListener('click', e => { if (e.target === wrap) close(); });
     $('.vs-x', wrap).onclick = close;
     requestAnimationFrame(() => wrap.classList.add('open'));
