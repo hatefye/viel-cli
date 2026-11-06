@@ -122,24 +122,38 @@ struct EpisodesSheet: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(entries) { entry in
-                        Button {
-                            Haptic.select()
-                            pick(entry.id)
-                        } label: {
-                            Text(entry.label)
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundStyle(entry.id == selected ? .black : .white)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.glass)
-                        .tint(entry.id == selected ? .white : .clear)
-                        .id(entry.id)
+                        seasonChip(entry, selected: entry.id == selected) { pick(entry.id) }
+                            .id(entry.id)
                     }
                 }
                 .padding(.horizontal, 16)
             }
             .onAppear { proxy.scrollTo(selected, anchor: .center) }
+        }
+    }
+
+    @ViewBuilder
+    private func seasonChip(_ entry: SeasonChip, selected: Bool, pick: @escaping () -> Void) -> some View {
+        let label = Text(entry.label)
+            .font(.system(size: 15, weight: .semibold))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+        if selected {
+            Button {
+                pick()
+            } label: {
+                label.foregroundStyle(.black)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(.white)
+        } else {
+            Button {
+                Haptic.select()
+                pick()
+            } label: {
+                label.foregroundStyle(.white)
+            }
+            .buttonStyle(.glass)
         }
     }
 

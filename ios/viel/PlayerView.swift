@@ -31,6 +31,7 @@ struct PlayerView: View {
     @State private var levelTask: Task<Void, Never>?
     @State private var dragStart: Double?
     @State private var boosting = false
+    @State private var nextSeasonItem: Playable?
 
     init(item: Playable) {
         _current = State(initialValue: item)
@@ -89,13 +90,13 @@ struct PlayerView: View {
             if let key = current.offline, core.settings.autoDeleteWatched {
                 Task { await core.removeDownload(key) }
             }
-            if let next = current.next, current.offline == nil {
+            if let next = upcoming, current.offline == nil {
                 let length = model.duration > 0 ? model.duration : Double((next.episode?.runtime ?? 24) * 60)
                 Task { await core.saveProgress(next.progress(position: 0, duration: length)) }
             }
             if model.sleepAtEnd {
                 dismiss()
-            } else if core.settings.autoplay, !dismissedNext, let next = current.next {
+            } else if core.settings.autoplay, !dismissedNext, let next = upcoming {
                 Task { await start(next) }
             } else {
                 dismiss()
@@ -105,15 +106,38 @@ struct PlayerView: View {
 
     private var skipSeconds: Double { Double(core.settings.skipSeconds) }
 
+    private var upcoming: Playable? { current.next ?? nextSeasonItem }
+
+    private var upcomingIsSeason: Bool {
+        guard let next = upcoming else { return false }
+        return next.title.id != current.title.id || next.episode?.season != current.episode?.season
+    }
+
     private var nextUp: Playable? {
-        guard core.settings.autoplay, !dismissedNext, model.status == nil, model.duration > 0, let next = current.next else { return nil }
+        guard core.settings.autoplay, !dismissedNext, model.status == nil, model.duration > 0, let next = upcoming else { return nil }
         return model.duration - model.position <= 20 ? next : nil
+    }
+
+    private var nextSeason: Season? {
+        guard current.isAnime, current.next == nil, current.offline == nil else { return nil }
+        guard let at = current.chain.firstIndex(where: { $0.id == current.title.id }), current.chain.indices.contains(at + 1) else { return nil }
+        return current.chain[at + 1]
     }
 
     private func start(_ item: Playable) async {
         current = item
         dismissedNext = false
+        nextSeasonItem = nil
         show()
+        if let entry = nextSeason {
+            let id = item.id
+            Task {
+                let list: EpisodeList? = try? await core.get("title", ["kind": "anime", "id": String(entry.id), "dub": item.dub ? "1" : "0"])
+                guard current.id == id, let list, !list.episodes.isEmpty else { return }
+                let title = Title(id: entry.id, kind: "anime", name: entry.title, year: entry.year, rating: 0, overview: nil, poster: entry.poster ?? item.title.poster, backdrop: item.title.backdrop, genres: item.title.genres, seasons: [])
+                nextSeasonItem = Playable(title: title, episodes: list.episodes, index: 0, dub: list.dub, startAt: nil, chain: item.chain)
+            }
+        }
         await model.start(item, core: core)
     }
 
@@ -453,8 +477,8 @@ struct PlayerView: View {
             if !current.isMovie {
                 toolButton("play.square.stack", "Episodes") { sheet = .episodes }
             }
-            if let next = current.next {
-                toolButton("forward.end.fill", "Next episode") { Task { await start(next) } }
+            if let next = upcoming {
+                toolButton("forward.end.fill", upcomingIsSeason ? "Next season" : "Next episode") { Task { await start(next) } }
             }
             toolButton("captions.bubble.fill", "Subtitles") { sheet = .subtitles }
             toolButton("gearshape.fill", "Settings") { sheet = .settings }
@@ -510,23 +534,23 @@ struct PlayerView: View {
     @ViewBuilder
     private func pauseMeta(_ landscape: Bool, size: CGSize) -> some View {
         if !model.isPlaying, model.status == nil {
-            let width = landscape ? min(400, max((size.width - 330) / 2, 220)) : size.width - 32
-            VStack(alignment: .leading, spacing: 6) {
-                Logo(url: model.details?.logo, name: current.title.name, maxWidth: min(width, 220), size: 24)
+            let width = landscape ? min(420, max((size.width - 400) / 2, 200)) : size.width - 32
+            VStack(alignment: .leading, spacing: 5) {
+                Logo(url: model.details?.logo, name: current.title.name, maxWidth: min(width, 200), size: 20)
                     .padding(.bottom, 6)
-                Text(metaLine).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.muted)
+                Text(metaLine).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.muted)
                 if let episode = current.episode {
-                    Text(episode.displayName).font(.system(size: 16, weight: .bold)).lineLimit(2)
+                    Text(episode.displayName).font(.system(size: 15, weight: .bold)).lineLimit(2)
                 }
                 if let overview = current.episode.map(\.overview).flatMap({ $0.isEmpty ? nil : $0 }) ?? model.details?.overview {
-                    Text(overview).font(.system(size: 13.5)).lineSpacing(3).foregroundStyle(Theme.soft).lineLimit(landscape ? 3 : 4)
+                    Text(overview).font(.system(size: 13)).lineSpacing(2).foregroundStyle(Theme.soft).lineLimit(landscape ? 2 : 4)
                 }
             }
             .foregroundStyle(.white)
             .frame(width: width, alignment: .leading)
             .padding(.leading, landscape ? 24 : 16)
-            .padding(.top, landscape ? 80 : 68)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.bottom, landscape ? 78 : 132)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
             .allowsHitTesting(false)
             .transition(.opacity)
         }
@@ -572,14 +596,19 @@ struct PlayerView: View {
             HStack {
                 Spacer()
                 if let skip = model.skipTarget {
+                    let season = skip == .outro && upcomingIsSeason ? upcoming : nil
                     Button {
                         Haptic.tap()
-                        model.skipMarker()
+                        if let season {
+                            Task { await start(season) }
+                        } else {
+                            model.skipMarker()
+                        }
                         poke()
                     } label: {
                         HStack(spacing: 8) {
-                            Text(skip == .intro ? "Skip Intro" : "Skip Outro").font(.system(size: 17, weight: .semibold))
-                            Image(systemName: "forward.fill").font(.system(size: 14, weight: .semibold))
+                            Text(season != nil ? "Next Season" : (skip == .intro ? "Skip Intro" : "Skip Outro")).font(.system(size: 17, weight: .semibold))
+                            Image(systemName: season != nil ? "forward.end.fill" : "forward.fill").font(.system(size: 14, weight: .semibold))
                         }
                         .foregroundStyle(.black)
                         .padding(.horizontal, 10)
@@ -613,8 +642,8 @@ struct PlayerView: View {
                     .frame(width: 40, height: 40)
                     .animation(.linear(duration: 0.25), value: left)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Next episode").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.muted)
-                        Text(next.episode?.label(anime: next.isAnime) ?? "").font(.system(size: 15, weight: .semibold)).lineLimit(1)
+                        Text(upcomingIsSeason ? "Next season" : "Next episode").font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.muted)
+                        Text(upcomingIsSeason && next.isAnime ? next.title.name : (next.episode?.label(anime: next.isAnime) ?? "")).font(.system(size: 15, weight: .semibold)).lineLimit(1)
                     }
                     Button("Play now") {
                         Haptic.tap()
@@ -861,7 +890,11 @@ struct TouchPad: UIViewRepresentable {
 
         @objc func pinched(_ recognizer: UIPinchGestureRecognizer) {
             guard recognizer.state == .ended else { return }
-            pad.onPinch(recognizer.scale > 1)
+            if recognizer.scale > 1.35 {
+                pad.onPinch(true)
+            } else if recognizer.scale < 0.75 {
+                pad.onPinch(false)
+            }
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {

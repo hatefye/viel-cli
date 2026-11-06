@@ -448,12 +448,14 @@ impl Api {
 
     fn anime_details(&self, id: u64) -> Result<Details> {
         let url = format!("{}/miruro/info/{}", self.host, id);
-        let (info, art) = thread::scope(|s| {
+        let (info, art, chain) = thread::scope(|s| {
             let a = s.spawn(|| -> Result<AnimeInfoFull> { Ok(self.client.get(url).send()?.json()?) });
             let b = s.spawn(|| self.anime_art(id));
+            let c = s.spawn(|| self.anime_chain(id));
             (
                 a.join().unwrap_or_else(|_| Err(anyhow!("anime lookup failed"))),
                 b.join().ok().flatten(),
+                c.join().unwrap_or_default(),
             )
         });
         let info = info?;
@@ -485,6 +487,7 @@ impl Api {
                 overview,
                 backdrop_path: backdrop.or(info.banner_image.filter(|s| !s.is_empty())),
                 genres: info.genres.unwrap_or_default(),
+                seasons: if chain.len() > 1 { chain } else { Vec::new() },
                 ..Title::bare(
                     id,
                     Kind::Anime,

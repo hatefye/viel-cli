@@ -35,7 +35,7 @@ struct DetailsView: View {
 
     private var isMovie: Bool { title.isMovie }
     private var isAnime: Bool { title.isAnime }
-    private var chain: [Season] { title.seasons }
+    private var chain: [Season] { title.seasons.isEmpty ? (details?.seasons ?? []) : title.seasons }
     private var shown: Title { details?.title ?? title }
 
     private var active: Title {
@@ -278,7 +278,7 @@ struct DetailsView: View {
                             Button("\(entry.season). \(entry.title)") { seasonId = entry.id }
                         }
                     } label: {
-                        seasonPill(seasonLabel)
+                        seasonPill(seasonLabel, menu: true)
                     }
                 } else if !isAnime, seasonNumbers.count > 1 {
                     Menu {
@@ -286,10 +286,10 @@ struct DetailsView: View {
                             Button("Season \(number)") { season = number }
                         }
                     } label: {
-                        seasonPill(seasonLabel)
+                        seasonPill(seasonLabel, menu: true)
                     }
                 } else {
-                    seasonPill(isAnime ? "Episodes" : seasonLabel)
+                    seasonPill(isAnime ? "Episodes" : seasonLabel, menu: false)
                 }
                 Spacer()
                 if isAnime {
@@ -372,13 +372,18 @@ struct DetailsView: View {
         }
     }
 
-    private func seasonPill(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 17, weight: .semibold))
-            .foregroundStyle(.black)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 11)
-            .background(Color.white, in: Capsule())
+    private func seasonPill(_ text: String, menu: Bool) -> some View {
+        HStack(spacing: 8) {
+            Text(text).font(.system(size: 17, weight: .semibold))
+            if menu {
+                Image(systemName: "chevron.down").font(.system(size: 13, weight: .bold))
+            }
+        }
+        .foregroundStyle(.black)
+        .padding(.leading, 22)
+        .padding(.trailing, menu ? 18 : 22)
+        .padding(.vertical, 11)
+        .background(Color.white, in: Capsule())
     }
 
     private func play(resuming: Bool) {
