@@ -1622,7 +1622,7 @@ final class PlayerModel: ObservableObject {
         refreshes += 1
         let at = position
         log("refresh: \(reason) after \(Int(Date().timeIntervalSince(attachedAt)))s, resuming at \(Int(at))s")
-        Task { await start(item.resuming(at: at), core: core, refreshing: true) }
+        Task { await self.start(item.resuming(at: at), core: core, refreshing: true) }
         return true
     }
 
