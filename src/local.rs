@@ -852,7 +852,15 @@ fn resolve_streams(api: &Api, lang: &str, p: PlayIn) -> Result<Vec<Stream>> {
                     .extract(src, &target, &title, None)
                     .filter(api::playable)
             });
-            with_subs(api, lang, &path, found)
+            let mut streams = with_subs(api, lang, &path, found);
+            if !movie && !streams.is_empty() {
+                let (intro, outro) = api.skips(p.id, p.season as u32, p.episode as u32);
+                for s in &mut streams {
+                    s.intro = s.intro.or(intro);
+                    s.outro = s.outro.or(outro);
+                }
+            }
+            streams
         }
         "anime" => {
             let sources = if p.sources.is_empty() {

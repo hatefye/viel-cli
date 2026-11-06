@@ -992,6 +992,21 @@ impl Api {
         Ok(resp.json::<WatchResp>()?.items)
     }
 
+    pub fn skips(&self, id: u64, season: u32, episode: u32) -> (Option<(f64, f64)>, Option<(f64, f64)>) {
+        let fetched: Option<SkipResp> = self
+            .client
+            .get(format!("{}/api/skip/{id}/{season}/{episode}", self.host))
+            .timeout(Duration::from_secs(8))
+            .send()
+            .ok()
+            .and_then(|r| r.json().ok());
+        let span = |s: Option<SkipSpan>| s.filter(|x| x.end_sec > x.start_sec + 1.0).map(|x| (x.start_sec, x.end_sec));
+        match fetched {
+            Some(resp) => (span(resp.intro.or(resp.recap)), span(resp.outro)),
+            None => (None, None),
+        }
+    }
+
     pub fn calendar(&self) -> Result<Vec<Upcoming>> {
         let entries = self.watchlist()?;
         let mut rows: Vec<Upcoming> = thread::scope(|s| {
@@ -1557,6 +1572,21 @@ struct HistoryResp {
 #[derive(Deserialize)]
 struct WatchResp {
     items: Vec<WatchEntry>,
+}
+
+#[derive(Deserialize)]
+struct SkipResp {
+    intro: Option<SkipSpan>,
+    recap: Option<SkipSpan>,
+    outro: Option<SkipSpan>,
+}
+
+#[derive(Deserialize)]
+struct SkipSpan {
+    #[serde(default)]
+    start_sec: f64,
+    #[serde(default)]
+    end_sec: f64,
 }
 
 pub struct Upcoming {
