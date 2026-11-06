@@ -2,6 +2,7 @@ pub mod api;
 pub mod fetch;
 pub mod hls;
 pub mod local;
+pub mod mux;
 pub mod net;
 pub mod offline;
 pub mod relay;

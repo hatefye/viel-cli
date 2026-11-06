@@ -37,6 +37,7 @@ crossterm = { version = "0.25", optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"], optional = true }
 ratatui = { version = "0.30", optional = true }
 ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"], optional = true }
+mp4 = "0.14"
 
 [profile.release]
 strip = true

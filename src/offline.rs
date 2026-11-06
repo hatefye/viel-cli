@@ -206,10 +206,21 @@ pub fn finish(key: &str) -> Result<Value> {
         thumbs: None,
     };
     let sub = fetch::save_subtitle(&stream, &plan.lang, &folder);
+    let main = match crate::mux::remux(&folder, &plan.main) {
+        Ok(main) => {
+            crate::mux::cleanup(&folder, &main);
+            main
+        }
+        Err(err) => {
+            let _ = fs::remove_file(folder.join("video.mp4.part"));
+            crate::local::log("download", format!("{key} kept as playlist: {err}"));
+            plan.main.clone()
+        }
+    };
     let bytes = folder_size(&folder);
     let mut meta = plan.meta.clone();
     if let Value::Object(map) = &mut meta {
-        map.insert("main".into(), json!(plan.main));
+        map.insert("main".into(), json!(main));
         map.insert("source".into(), json!(plan.source));
         map.insert("bytes".into(), json!(bytes));
         map.insert("intro".into(), json!(plan.intro));

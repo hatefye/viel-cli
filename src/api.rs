@@ -10,8 +10,8 @@ use std::thread;
 use std::time::Duration;
 
 const SOURCES: [&str; 5] = ["cno", "vixsrc", "mapple", "vidbolt", "vidrock"];
-const ANIME_SUB: [&str; 4] = ["animeparadise", "animekai", "kototv", "luffy"];
-const ANIME_DUB: [&str; 3] = ["animekai", "kototv", "luffy"];
+const ANIME_SUB: [&str; 4] = ["kototv", "animeparadise", "animekai", "luffy"];
+const ANIME_DUB: [&str; 3] = ["kototv", "animekai", "luffy"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {

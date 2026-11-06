@@ -26,6 +26,9 @@ struct DownloadsSection: View {
                             if item.isDone, let playable = item.playable {
                                 Button { onPlay(playable) } label: { Label("Play", systemImage: "play.fill") }
                             }
+                            if item.isDone, let file = item.videoFile {
+                                ShareLink(item: file) { Label("Share video file", systemImage: "square.and.arrow.up") }
+                            }
                             Button(role: .destructive) {
                                 onRemove(item.key)
                             } label: {

@@ -411,6 +411,11 @@ struct Download: Decodable, Hashable, Identifiable {
     var id: String { key }
     var isDone: Bool { state == "done" }
     var isActive: Bool { state == "queued" || state == "fetching" }
+
+    var videoFile: URL? {
+        let file = Core.downloadsRoot.appendingPathComponent(key, isDirectory: true).appendingPathComponent("video.mp4")
+        return FileManager.default.fileExists(atPath: file.path) ? file : nil
+    }
     var fraction: Double { total > 0 ? Double(done) / Double(total) : 0 }
 
     var sizeText: String {
