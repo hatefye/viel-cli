@@ -3,6 +3,7 @@
 mod downloads;
 mod mpv;
 mod native;
+mod presence;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -10,7 +11,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow, WindowEvent};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, ShortcutState};
 use viel::{local, relay};
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -20,6 +24,8 @@ struct Store {
     username: Option<String>,
     #[serde(default)]
     host: Option<String>,
+    #[serde(default)]
+    tray: Option<bool>,
 }
 
 struct App {
@@ -112,6 +118,25 @@ async fn api(
         }
     }
     Ok(value)
+}
+
+#[tauri::command]
+fn set_tray(app: State<App>, on: bool) {
+    app.store.lock().unwrap().tray = Some(on);
+    app.save();
+}
+
+#[tauri::command]
+fn presence(playing: Option<presence::Playing>) {
+    presence::update(playing);
+}
+
+fn reveal(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
 }
 
 #[tauri::command]
@@ -292,14 +317,68 @@ fn main() {
                 player: mpv::Slot::default(),
             });
             let _ = window.show();
+            let open = MenuItem::with_id(app, "open", "Open viel", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&open, &PredefinedMenuItem::separator(app)?, &quit])?;
+            let mut tray = TrayIconBuilder::with_id("main")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .tooltip("viel")
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "open" => reveal(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        reveal(tray.app_handle());
+                    }
+                });
+            if let Some(icon) = app.default_window_icon() {
+                tray = tray.icon(icon.clone());
+            }
+            tray.build(app)?;
+            let keys = ["MediaPlayPause", "MediaTrackNext", "MediaTrackPrevious", "MediaStop"];
+            for key in keys {
+                let _ = app.global_shortcut().register(key);
+            }
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let WindowEvent::Resized(_) = event {
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state != ShortcutState::Pressed {
+                        return;
+                    }
+                    let key = match shortcut.key {
+                        Code::MediaPlayPause => "playpause",
+                        Code::MediaTrackNext => "next",
+                        Code::MediaTrackPrevious => "prev",
+                        Code::MediaStop => "stop",
+                        _ => return,
+                    };
+                    let _ = app.emit("media", key);
+                })
+                .build(),
+        )
+        .on_window_event(|window, event| match event {
+            WindowEvent::Resized(_) => {
                 if let Some(w) = window.get_webview_window("main") {
                     native::fit_child(&w);
                 }
             }
+            WindowEvent::CloseRequested { api, .. } => {
+                let keep = window
+                    .try_state::<App>()
+                    .map(|a| a.store.lock().unwrap().tray.unwrap_or(true))
+                    .unwrap_or(true);
+                if keep {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    let _ = window.emit("tray", json!({ "hidden": true }));
+                }
+            }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             boot,
@@ -316,7 +395,9 @@ fn main() {
             open_external,
             open_downloads,
             log,
-            win
+            win,
+            set_tray,
+            presence
         ])
         .run(tauri::generate_context!())
         .expect("viel failed to start");

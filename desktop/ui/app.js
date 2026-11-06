@@ -50,10 +50,10 @@
   };
 
   let toastTimer;
-  const toast = text => { const t = byId('toast'); t.textContent = text; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600); };
+  const toast = (text, ms, onClick) => { const t = byId('toast'); t.textContent = text; t.onclick = onClick || null; t.style.cursor = onClick ? 'pointer' : ''; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms || 2600); };
 
   const Settings = {
-    data: Object.assign({ maxHeight: 1080, downloadHeight: 1080, subtitleLang: 'en', audioLang: '', subSize: 1, skipSeconds: 10, autoplay: true, hwdec: true, volume: 100, mute: false, speed: 1, subBg: 'shadow', subColor: 'white', subPx: 24, subLift: 0, uiScale: 'm', dub: false, heroRotate: true, autoSkip: false }, JSON.parse(localStorage.getItem('settings') || '{}')),
+    data: Object.assign({ maxHeight: 1080, downloadHeight: 1080, subtitleLang: 'en', audioLang: '', subSize: 1, skipSeconds: 10, autoplay: true, hwdec: true, volume: 100, mute: false, speed: 1, subBg: 'shadow', subColor: 'white', subPx: 24, subLift: 0, uiScale: 'm', dub: false, heroRotate: true, autoSkip: false, presence: true, tray: true, updates: true }, JSON.parse(localStorage.getItem('settings') || '{}')),
     save() { localStorage.setItem('settings', JSON.stringify(this.data)); },
     set(k, v) { this.data[k] = v; this.save(); },
     push() { return api.post('settings', { max_height: this.data.maxHeight, subtitle_lang: this.data.subtitleLang, audio_lang: this.data.audioLang || '' }).catch(() => {}); },
@@ -668,6 +668,12 @@
         ${row('Download quality', '', seg('downloadHeight', [480, 720, 1080, 2160], q))}
         ${row('Downloads folder', esc(App.boot.downloads || ''), '<button class="vs-seg" style="padding:6px 12px;font-weight:600;font-size:12px;color:#fff" id="vs-folder">Open</button>')}
       </div>
+      <div class="vs-section"><div class="vs-label">App</div>
+        ${row('Discord presence', 'Shows what you are watching on your Discord profile.', sw('presence'), 'presence')}
+        ${row('Keep running in the tray', 'Closing the window hides viel instead of quitting. Quit from the tray icon.', sw('tray'), 'tray')}
+        ${row('Check for updates', 'Tells you when a newer build is on viel.tv.', sw('updates'), 'updates')}
+        ${row('Media keys', 'Play/pause, next and previous track keys work anywhere.', '')}
+      </div>
       <div class="vs-section"><div class="vs-label">Keyboard</div><div class="vs-keys">
         <div><span>Play / pause</span><span><kbd>Space</kbd> <kbd>K</kbd></span></div><div><span>Seek</span><span><kbd>←</kbd> <kbd>→</kbd></span></div>
         <div><span>Seek a minute</span><span><kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd></span></div><div><span>Volume</span><span><kbd>↑</kbd> <kbd>↓</kbd></span></div>
@@ -693,6 +699,8 @@
     if (key === 'subBg' || key === 'subColor') Player.applySubStyle();
     if (key === 'skipSeconds') Player.refreshSkip();
     if (key === 'heroRotate') renderHero();
+    if (key === 'tray') invoke('set_tray', { on: !!S.tray });
+    if (key === 'presence') Player.presence();
   }
 
   let accountModal = null;
@@ -867,9 +875,19 @@
       renderSettingsPane();
       log('play', `${Item.heading(st.item)} via ${s.source}${at ? ` @${Math.round(at)}` : ''}`);
     }
+    function presence() {
+      const it = st.item;
+      if (!S.presence || !st.open || !it || st.loading || (st.stream && st.stream.source === 'offline')) { invoke('presence', { playing: null }).catch(() => {}); return; }
+      const e = Item.ep(it);
+      invoke('presence', { playing: { kind: it.title.kind, id: it.title.id, show: it.title.name, episode_title: e ? e.name || '' : '', season: e ? e.season : 0, episode: e ? e.number : 0, position: st.pos || 0, paused: !!st.paused, poster: it.title.poster || '', host: App.boot.host || '' } }).catch(() => {});
+    }
+    let presenceTimer = null;
     async function onLoaded() {
       st.loading = false;
       scanning(false);
+      clearInterval(presenceTimer);
+      presenceTimer = setInterval(presence, 15000);
+      presence();
       if (st.stream && st.stream.source !== 'offline') { Memory.rememberSource(st.item.title, st.stream.source); sourceToast(`Playing from ${fullName(st.stream.source)}`); }
       await set('start', 'none');
       const want = Memory.subtitle(st.item.title) || S.subtitleLang;
@@ -1001,6 +1019,8 @@
       st.sleepAt = null; st.sleepAtEnd = false;
       window.removeEventListener('keydown', onKey, true);
       await cmd('stop');
+      clearInterval(presenceTimer);
+      invoke('presence', { playing: null }).catch(() => {});
       invoke('player_show', { visible: false });
       if (st.fullscreen) { st.fullscreen = false; invoke('win', { action: 'fullscreen', on: false }); }
       if (st.mini) toggleMini(false);
@@ -1081,7 +1101,7 @@
     function onProp(name, value) {
       st.props[name] = value;
       switch (name) {
-        case 'pause': st.paused = !!value; ui.iconPlay.style.display = st.paused ? '' : 'none'; ui.iconPause.style.display = st.paused ? 'none' : ''; root.classList.toggle('paused', st.paused); if (st.paused) showControls(); else scheduleHide(); break;
+        case 'pause': st.paused = !!value; ui.iconPlay.style.display = st.paused ? '' : 'none'; ui.iconPause.style.display = st.paused ? 'none' : ''; root.classList.toggle('paused', st.paused); if (st.paused) showControls(); else scheduleHide(); if (!st.loading) presence(); break;
         case 'time-pos': if (value != null && !st.scrubbing) { st.pos = value; updateTime(); } break;
         case 'duration': if (value != null) { st.dur = value; updateTime(); drawMarkers(); } break;
         case 'paused-for-cache': root.classList.toggle('buffering', !!value && !st.loading); ui.ring.classList.toggle('hidden', !(value && !st.loading)); break;
@@ -1356,7 +1376,15 @@
     setInterval(tick, 1000);
     refreshSkip();
     paintVolume();
-    return { init, start, close, set, applySubStyle, refreshSkip, get open() { return st.open; } };
+    function media(key) {
+      if (!st.open || !st.item) return;
+      if (key === 'playpause') togglePlay();
+      else if (key === 'next') goNext();
+      else if (key === 'prev') { if (st.pos > 5) seek(0, true); else if (st.item.index > 0 && !Item.isMovie(st.item)) start(Item.at(st.item, st.item.index - 1)); }
+      else if (key === 'stop') close();
+    }
+    function pause() { if (st.open && st.item && !st.paused) set('pause', 'yes'); }
+    return { init, start, close, set, applySubStyle, refreshSkip, presence, media, pause, get open() { return st.open; } };
   })();
 
   $$('.tab[data-mode]').forEach(b => b.onclick = () => showMode(b.dataset.mode));
@@ -1378,9 +1406,23 @@
     if (e.key === '/') { e.preventDefault(); openSearch(); }
   });
 
+  const newer = (a, b) => { const x = String(a || '').split('.').map(Number), y = String(b || '').split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) > (y[i] || 0)) return true; if ((x[i] || 0) < (y[i] || 0)) return false; } return false; };
+  async function checkUpdates() {
+    if (!S.updates || !App.boot.version) return;
+    try {
+      const r = await fetch(`${App.boot.host}/desktop/version.json`, { cache: 'no-store' });
+      if (!r.ok) return;
+      const j = await r.json();
+      if (j && newer(j.version, App.boot.version)) toast(`viel ${j.version} is out. Click to download.`, 9000, () => invoke('open_external', { url: j.url || `${App.boot.host}/desktop/viel-windows.zip` }));
+    } catch (_) {}
+  }
+  listen('media', key => Player.media(key));
+  listen('tray', p => { if (p && p.hidden) Player.pause(); });
   async function main() {
     document.documentElement.classList.toggle('fine-pointer', matchMedia('(hover:hover) and (pointer:fine)').matches);
     try { App.boot = await invoke('boot'); } catch (e) { App.boot = { host: 'https://viel.tv' }; }
+    invoke('set_tray', { on: !!S.tray }).catch(() => {});
+    setTimeout(checkUpdates, 4000);
     byId('foot-version').textContent = App.boot.version || '';
     setUser(App.boot.username);
     Settings.push();
