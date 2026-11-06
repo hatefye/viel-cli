@@ -85,22 +85,36 @@ fn library_candidates() -> Vec<PathBuf> {
             out.push(dir.join("lib").join("libmpv-2.dll"));
         }
     }
-    for name in ["libmpv-2.dll", "libmpv.so.2", "libmpv.so", "libmpv.2.dylib", "libmpv.dylib"] {
-        out.push(PathBuf::from(name));
-    }
     out
 }
 
 impl Api {
     fn load() -> Result<Self> {
+        let candidates = library_candidates();
+        let present: Vec<&PathBuf> = candidates.iter().filter(|p| p.is_file()).collect();
+        if present.is_empty() {
+            let dir = std::env::current_exe()
+                .ok()
+                .and_then(|e| e.parent().map(|d| d.display().to_string()))
+                .unwrap_or_default();
+            if cfg!(windows) {
+                bail!("libmpv-2.dll is missing: put it in the same folder as viel.exe ({dir})");
+            }
+            bail!("libmpv is not installed");
+        }
         let mut last = None;
-        for path in library_candidates() {
-            match unsafe { Library::new(&path) } {
+        for path in present {
+            match unsafe { Library::new(path) } {
                 Ok(lib) => return unsafe { Self::bind(lib) },
-                Err(e) => last = Some(format!("{}: {e}", path.display())),
+                Err(e) => last = Some(format!("{} could not be loaded: {e}", path.display())),
             }
         }
-        bail!("libmpv not found ({})", last.unwrap_or_default())
+        for name in ["libmpv-2.dll", "libmpv.so.2", "libmpv.so", "libmpv.2.dylib", "libmpv.dylib"] {
+            if let Ok(lib) = unsafe { Library::new(name) } {
+                return unsafe { Self::bind(lib) };
+            }
+        }
+        bail!("{}", last.unwrap_or_else(|| "libmpv not found".into()))
     }
 
     unsafe fn bind(lib: Library) -> Result<Self> {
