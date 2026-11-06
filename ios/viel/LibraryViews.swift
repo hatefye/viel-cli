@@ -98,6 +98,7 @@ struct HistoryView: View {
     @State private var query = ""
     @State private var loading = true
     @State private var selected: Resume?
+    @State private var export: URL?
 
     private var visible: [HistoryRow] {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
@@ -149,6 +150,14 @@ struct HistoryView: View {
         .navigationTitle("History")
         .navigationBarTitleDisplayMode(.large)
         .toolbarBackground(Theme.bg, for: .navigationBar)
+        .toolbar {
+            if let export {
+                ToolbarItem(placement: .topBarTrailing) {
+                    ShareLink(item: export) { Image(systemName: "square.and.arrow.up") }
+                        .accessibilityLabel("Export history")
+                }
+            }
+        }
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search history")
         .task { await load() }
         .fullScreenCover(item: $selected) { DetailsView(title: $0.title, resume: $0).environmentObject(core) }
@@ -157,6 +166,21 @@ struct HistoryView: View {
     private func load() async {
         rows = await core.history()
         loading = false
+        writeExport()
+    }
+
+    private func writeExport() {
+        guard !rows.isEmpty else { export = nil; return }
+        let quote = { (text: String) in "\"" + text.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
+        var lines = ["kind,id,show,season,episode,position_seconds,duration_seconds,updated"]
+        for row in rows {
+            let when = row.updatedAt > 0 ? ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: Double(row.updatedAt) / 1000)) : ""
+            lines.append("\(row.kind),\(row.id),\(quote(row.show)),\(row.season),\(row.episode),\(Int(row.position)),\(Int(row.duration)),\(when)")
+        }
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("viel-history.csv")
+        if (try? lines.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)) != nil {
+            export = file
+        }
     }
 
     private func markWatched(_ row: HistoryRow) async {

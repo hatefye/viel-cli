@@ -23,6 +23,8 @@ struct Settings: Codable {
     var backgroundAudio = false
     var appLock = false
     var privateMode = false
+    var ambient = false
+    var cellularHeight = 0
 
     init() {}
 
@@ -48,6 +50,8 @@ struct Settings: Codable {
         backgroundAudio = try box.decodeIfPresent(Bool.self, forKey: .backgroundAudio) ?? backgroundAudio
         appLock = try box.decodeIfPresent(Bool.self, forKey: .appLock) ?? appLock
         privateMode = try box.decodeIfPresent(Bool.self, forKey: .privateMode) ?? privateMode
+        ambient = try box.decodeIfPresent(Bool.self, forKey: .ambient) ?? ambient
+        cellularHeight = try box.decodeIfPresent(Int.self, forKey: .cellularHeight) ?? cellularHeight
     }
 
     static func load() -> Settings {
@@ -85,6 +89,8 @@ final class Core: ObservableObject {
     private var keepAlive: UIBackgroundTaskIdentifier = .invalid
     private let monitor = NWPathMonitor()
     @Published var username: String?
+    @Published var offline = false
+    @Published var expensive = false
     @Published var settings: Settings {
         didSet { settings.save() }
     }
@@ -110,9 +116,13 @@ final class Core: ObservableObject {
             await DownloadManager.shared.resume(core: self)
             await Watchlist.shared.sync(core: self)
         }
-        monitor.pathUpdateHandler = { [weak self] _ in
+        monitor.pathUpdateHandler = { [weak self] path in
             Task { @MainActor in
-                guard let self, self.settings.airplay else { return }
+                guard let self else { return }
+                let wasExpensive = self.expensive
+                self.offline = path.status != .satisfied
+                self.expensive = path.isExpensive
+                guard self.settings.airplay || wasExpensive != self.expensive else { return }
                 await self.pushSettings()
             }
         }
@@ -200,7 +210,8 @@ final class Core: ObservableObject {
             let lan_host: String
         }
         let lan = settings.airplay ? (Core.wifiAddress() ?? "") : ""
-        let _: Ok? = try? await post("settings", Body(max_height: settings.maxHeight, subtitle_lang: settings.subtitleLang, audio_lang: settings.audioLang, lan_host: lan))
+        let cap = expensive && settings.cellularHeight > 0 ? min(settings.maxHeight, settings.cellularHeight) : settings.maxHeight
+        let _: Ok? = try? await post("settings", Body(max_height: cap, subtitle_lang: settings.subtitleLang, audio_lang: settings.audioLang, lan_host: lan))
     }
 
     func audioTracks(for url: String) async -> [AudioTrack] {
@@ -264,8 +275,8 @@ final class Core: ObservableObject {
         (try? await get("downloads")) ?? []
     }
 
-    func download(_ item: Playable) async throws {
-        try await DownloadManager.shared.start(item, core: self)
+    func download(_ item: Playable, height: Int? = nil) async throws {
+        try await DownloadManager.shared.start(item, core: self, height: height)
     }
 
     func removeDownload(_ key: String) async {

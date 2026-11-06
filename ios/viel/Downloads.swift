@@ -44,9 +44,9 @@ final class DownloadManager: NSObject, URLSessionDownloadDelegate {
     }
 
     @MainActor
-    func start(_ item: Playable, core: Core) async throws {
+    func start(_ item: Playable, core: Core, height: Int? = nil) async throws {
         let request = item.request
-        let body = DownloadRequest(kind: request.kind, id: request.id, title: request.title, season: request.season, episode: request.episode, dub: request.dub, sources: request.sources, key: item.downloadKey, meta: item.downloadMeta, max_height: core.settings.downloadHeight)
+        let body = DownloadRequest(kind: request.kind, id: request.id, title: request.title, season: request.season, episode: request.episode, dub: request.dub, sources: request.sources, key: item.downloadKey, meta: item.downloadMeta, max_height: height ?? core.settings.downloadHeight)
         let plan: DownloadPlan = try await core.post("downloads/plan", body)
         store(plan)
         enqueue(plan, only: nil)

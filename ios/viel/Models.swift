@@ -303,6 +303,11 @@ struct Playable: Hashable, Identifiable {
         return isAnime ? "E\(episode.numberText)" : "S\(episode.season) · E\(Int(episode.number))"
     }
 
+    var link: String {
+        guard let episode else { return "viel://\(title.kind)/\(title.id)" }
+        return isAnime ? "viel://anime/\(title.id)/\(episode.numberText)" : "viel://tv/\(title.id)/\(episode.season)/\(Int(episode.number))"
+    }
+
     var next: Playable? {
         guard !isMovie, episodes.indices.contains(index + 1) else { return nil }
         return Playable(title: title, episodes: episodes, index: index + 1, dub: dub, startAt: nil, chain: chain)

@@ -8,6 +8,8 @@ struct MainView: View {
     @State private var notes = false
     @State private var release: AppRelease?
     @State private var showRelease = false
+    @State private var inflight: DeepLink?
+    @State private var showInflight = false
     @AppStorage("seenBuild") private var seenBuild = ""
     @Environment(\.openURL) private var openURL
 
@@ -50,12 +52,26 @@ struct MainView: View {
             } else if seenBuild != core.build, !ReleaseNotes.current.isEmpty {
                 notes = true
             }
+            if let raw = UserDefaults.standard.string(forKey: "inflight"), let url = URL(string: raw), let link = DeepLink(url) {
+                UserDefaults.standard.removeObject(forKey: "inflight")
+                inflight = link
+                showInflight = true
+            }
             Task {
                 if let found = await Updates.check(core: core) {
                     release = found
                     showRelease = true
                 }
             }
+        }
+        .alert("Pick up where you left off?", isPresented: $showInflight, presenting: inflight) { link in
+            Button("Resume") {
+                shortcuts.pending = Shortcuts.home
+                shortcuts.link = link
+            }
+            Button("Not now", role: .cancel) {}
+        } message: { _ in
+            Text("viel closed while something was playing.")
         }
         .alert("viel \(release?.version ?? "") is available", isPresented: $showRelease, presenting: release) { found in
             Button("Download") { openURL(URL(string: found.url ?? "https://viel.tv/desktop") ?? URL(string: "https://viel.tv/desktop")!) }

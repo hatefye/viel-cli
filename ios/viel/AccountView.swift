@@ -48,6 +48,13 @@ struct AccountView: View {
                     Toggle("Prefer dubbed anime", isOn: $core.settings.dub)
                     Toggle("Autoplay next episode", isOn: $core.settings.autoplay)
                     Toggle("Keep playing in the background", isOn: $core.settings.backgroundAudio)
+                    Toggle("Ambient glow around the video", isOn: $core.settings.ambient)
+                    Picker("Limit on cellular", selection: $core.settings.cellularHeight) {
+                        Text("Off").tag(0)
+                        ForEach([480, 720, 1080], id: \.self) { quality in
+                            Text("\(quality)p").tag(quality)
+                        }
+                    }
                     Picker("Skip buttons", selection: $core.settings.skipSeconds) {
                         ForEach([10, 15, 30], id: \.self) { seconds in
                             Text("\(seconds) seconds").tag(seconds)
@@ -121,6 +128,7 @@ struct AccountView: View {
             }
             .onChange(of: core.settings.maxHeight) { _, _ in Task { await core.pushSettings() } }
             .onChange(of: core.settings.subtitleLang) { _, _ in Task { await core.pushSettings() } }
+            .onChange(of: core.settings.cellularHeight) { _, _ in Task { await core.pushSettings() } }
             .onChange(of: core.settings.airplay) { _, _ in Task { await core.pushSettings() } }
             .onChange(of: core.settings.episodeAlerts) { _, on in
                 guard on else { return }

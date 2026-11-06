@@ -42,6 +42,22 @@ struct RootView: View {
                 .ignoresSafeArea(edges: .top)
                 .refreshable { await load() }
                 header
+                if core.offline {
+                    HStack(spacing: 10) {
+                        Image(systemName: "wifi.slash").font(.system(size: 15, weight: .semibold))
+                        Text("You're offline. Your downloads are in My List.").font(.system(size: 14, weight: .medium))
+                        Spacer()
+                        Button("Open") { shortcuts.pending = Shortcuts.list }
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .glassEffect(.regular, in: .rect(cornerRadius: 16))
+                    .padding(.horizontal, 16)
+                    .padding(.top, 58)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
             }
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: ListPage.self) { ListView(page: $0) }

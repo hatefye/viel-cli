@@ -258,6 +258,12 @@ struct SettingsSheet: View {
                     } label: {
                         row(icon: "gauge.with.needle", label: "Playback speed", value: model.rate == 1 ? "Normal" : "\(model.rate)x")
                     }
+                    Button {
+                        Haptic.select()
+                        model.markLoop()
+                    } label: {
+                        row(icon: "repeat", label: model.loop == nil ? "Loop a section" : "Clear the loop", value: model.loopLabel)
+                    }
                     Menu {
                         Button("Off") { model.setSleep(minutes: nil) }
                         ForEach(sleeps, id: \.self) { minutes in

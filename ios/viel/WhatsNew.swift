@@ -2,6 +2,11 @@ import SwiftUI
 
 enum ReleaseNotes {
     static let current: [(String, String, String)] = [
+        ("repeat", "Loop a section", "Set a start and an end from the player settings to replay a scene or an opening."),
+        ("arrow.down.circle.dotted", "Pick a download quality", "Long-press an episode for Download in… 480p to 4K."),
+        ("antenna.radiowaves.left.and.right.slash", "Cellular cap and offline mode", "Limit quality on cellular under Playback. Offline, the home page points you to your downloads."),
+        ("sparkles", "Ambient glow", "A soft blur of the episode art fills the bars around the video. Off by default under Playback."),
+        ("arrow.counterclockwise", "Pick up after a crash", "If viel closes while something is playing, it offers to resume on the next launch."),
         ("faceid", "Face ID lock and private mode", "Both under Settings → Privacy. Private mode keeps what you watch out of history."),
         ("chart.bar", "Your stats", "Hours watched, streaks and most watched, from the chart button in My List. Shareable."),
         ("mic", "Siri and Spotlight", "Say \"Resume on viel\", or find titles from My List in iPhone search."),

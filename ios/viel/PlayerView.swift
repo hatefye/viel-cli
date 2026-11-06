@@ -45,6 +45,17 @@ struct PlayerView: View {
             let landscape = geometry.size.width > geometry.size.height
             ZStack {
                 Color.black.ignoresSafeArea()
+                if core.settings.ambient, !fill, let art = current.episode?.still ?? current.title.backdrop ?? current.title.poster, let link = URL(string: art) {
+                    AsyncImage(url: link) { phase in
+                        if let image = phase.image {
+                            image.resizable().scaledToFill()
+                        }
+                    }
+                    .blur(radius: 70)
+                    .opacity(0.35)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                }
                 PlayerSurface(model: model, fill: fill).ignoresSafeArea()
                 touchPad
                 Group {
@@ -86,6 +97,7 @@ struct PlayerView: View {
         }
         .onDisappear {
             model.stop()
+            UserDefaults.standard.removeObject(forKey: "inflight")
             Orientation.request(.portrait)
         }
         .onChange(of: model.isPlaying) { _, playing in
@@ -164,6 +176,9 @@ struct PlayerView: View {
         model.subDelay = core.settings.subDelay
         model.backgroundAudio = core.settings.backgroundAudio
         model.pip?.canStartPictureInPictureAutomaticallyFromInline = !core.settings.backgroundAudio
+        if item.offline == nil {
+            UserDefaults.standard.set(item.link, forKey: "inflight")
+        }
         show()
         if let entry = nextSeason {
             let id = item.id
@@ -1251,6 +1266,8 @@ final class PlayerModel: ObservableObject {
     @Published var stats: [String] = []
     var subDelay = 0.0
     var backgroundAudio = false
+    @Published var loopStart: Double?
+    @Published var loop: (Double, Double)?
     weak var surface: PlayerLayerView?
     private var detached = false
     private var remote: [(MPRemoteCommand, Any)] = []
@@ -1293,6 +1310,8 @@ final class PlayerModel: ObservableObject {
             finished = false
             failed = false
             cue = nil
+            loop = nil
+            loopStart = nil
             skipTarget = nil
             thumbs = []
             streams = []
@@ -1408,6 +1427,29 @@ final class PlayerModel: ObservableObject {
         guard let sleepAt else { return "Off" }
         let left = max(sleepAt.timeIntervalSinceNow, 0)
         return left >= 60 ? "\(Int(left / 60) + (Int(left) % 60 > 0 ? 1 : 0))m" : "\(Int(left))s"
+    }
+
+    func markLoop() {
+        if loop != nil {
+            loop = nil
+            loopStart = nil
+            log("loop cleared")
+        } else if let start = loopStart {
+            let span = (min(start, position), max(start, position))
+            if span.1 - span.0 >= 1 {
+                loop = span
+                log("loop \(Int(span.0))s-\(Int(span.1))s")
+            }
+            loopStart = nil
+        } else {
+            loopStart = position
+        }
+    }
+
+    var loopLabel: String {
+        if let loop { return "\(Format.clock(loop.0)) – \(Format.clock(loop.1))" }
+        if loopStart != nil { return "Start set · tap to end" }
+        return "Off"
     }
 
     func sceneBackground() {
@@ -1831,6 +1873,9 @@ final class PlayerModel: ObservableObject {
         }
         let text = Subtitles.cue(in: cues, at: seconds + subDelay)
         if text != cue { cue = text }
+        if let loop, seconds >= loop.1 {
+            seek(to: loop.0)
+        }
         publishNowPlaying()
         var target: Marker?
         for which in [Marker.intro, .outro] where !passed.contains(which) {

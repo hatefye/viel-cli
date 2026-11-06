@@ -385,6 +385,13 @@ struct DetailsView: View {
                             } label: {
                                 Label("Download", systemImage: "arrow.down.circle")
                             }
+                            Menu {
+                                ForEach([480, 720, 1080, 2160], id: \.self) { quality in
+                                    Button(quality == 2160 ? "4K" : "\(quality)p") { download(item, height: quality) }
+                                }
+                            } label: {
+                                Label("Download in…", systemImage: "arrow.down.circle.dotted")
+                            }
                             Button {
                                 Task { await markWatched(episode) }
                             } label: {
@@ -441,7 +448,7 @@ struct DetailsView: View {
         playing = Playable(title: active, episodes: list.episodes, index: index, dub: list.dub, startAt: startAt, chain: chain)
     }
 
-    private func download(_ item: Playable) {
+    private func download(_ item: Playable, height: Int? = nil) {
         guard !downloaded.contains(item.downloadKey) else {
             flash("Already downloaded")
             return
@@ -450,7 +457,7 @@ struct DetailsView: View {
         downloaded.insert(item.downloadKey)
         Task {
             do {
-                try await core.download(item)
+                try await core.download(item, height: height)
                 flash("Added to downloads")
             } catch {
                 downloaded.remove(item.downloadKey)
