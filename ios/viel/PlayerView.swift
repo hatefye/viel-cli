@@ -80,7 +80,10 @@ struct PlayerView: View {
         .animation(.easeInOut(duration: 0.3), value: model.status == nil)
         .animation(.smooth(duration: 0.3), value: sheet)
         .task { await start(current) }
-        .onAppear { Orientation.request(.landscape) }
+        .onAppear {
+            Orientation.request(.landscape)
+            UIApplication.shared.beginReceivingRemoteControlEvents()
+        }
         .onDisappear {
             model.stop()
             Orientation.request(.portrait)
@@ -91,10 +94,14 @@ struct PlayerView: View {
         .onChange(of: phase) { _, value in
             if value == .background {
                 away = Date()
-            } else if value == .active, let since = away {
-                away = nil
-                if Date().timeIntervalSince(since) > 480, !model.isPlaying, model.status == nil, current.offline == nil {
-                    model.reload()
+                model.sceneBackground()
+            } else if value == .active {
+                model.sceneForeground()
+                if let since = away {
+                    away = nil
+                    if Date().timeIntervalSince(since) > 480, !model.isPlaying, model.status == nil, current.offline == nil {
+                        model.reload()
+                    }
                 }
             }
         }
@@ -155,6 +162,8 @@ struct PlayerView: View {
         queuedNext = false
         fill = Memory.fill(for: item.title.key)
         model.subDelay = core.settings.subDelay
+        model.backgroundAudio = core.settings.backgroundAudio
+        model.pip?.canStartPictureInPictureAutomaticallyFromInline = !core.settings.backgroundAudio
         show()
         if let entry = nextSeason {
             let id = item.id
@@ -1168,8 +1177,9 @@ struct PlayerSurface: UIViewRepresentable {
         view.backgroundColor = .black
         view.playerLayer.player = model.player
         view.playerLayer.videoGravity = fill ? .resizeAspectFill : .resizeAspect
+        model.surface = view
         if AVPictureInPictureController.isPictureInPictureSupported(), let pip = AVPictureInPictureController(playerLayer: view.playerLayer) {
-            pip.canStartPictureInPictureAutomaticallyFromInline = true
+            pip.canStartPictureInPictureAutomaticallyFromInline = !model.backgroundAudio
             pip.delegate = context.coordinator
             context.coordinator.pip = pip
             model.pip = pip
@@ -1240,6 +1250,12 @@ final class PlayerModel: ObservableObject {
     @Published var showStats = false
     @Published var stats: [String] = []
     var subDelay = 0.0
+    var backgroundAudio = false
+    weak var surface: PlayerLayerView?
+    private var detached = false
+    private var remote: [(MPRemoteCommand, Any)] = []
+    private var artwork: MPMediaItemArtwork?
+    private var lastNowPlaying = Date.distantPast
 
     var pip: AVPictureInPictureController?
 
@@ -1291,6 +1307,8 @@ final class PlayerModel: ObservableObject {
         cues = []
         passed = []
         startAt = item.startAt
+        installRemote()
+        loadArtwork(item.episode?.still ?? item.title.poster)
         log("start \(item.heading) from \(Int(item.startAt ?? 0))s\(item.offline == nil ? "" : " (offline)")")
         if item.offline == nil { pollActivity() }
         let started = Date()
@@ -1338,6 +1356,7 @@ final class PlayerModel: ObservableObject {
             report(position)
         }
         log("stop at \(Int(position))s")
+        removeRemote()
         sleepTask?.cancel()
         generation += 1
         cleanup()
@@ -1389,6 +1408,77 @@ final class PlayerModel: ObservableObject {
         guard let sleepAt else { return "Off" }
         let left = max(sleepAt.timeIntervalSinceNow, 0)
         return left >= 60 ? "\(Int(left / 60) + (Int(left) % 60 > 0 ? 1 : 0))m" : "\(Int(left))s"
+    }
+
+    func sceneBackground() {
+        guard backgroundAudio, isPlaying, let surface else { return }
+        surface.playerLayer.player = nil
+        detached = true
+        log("playing on in the background")
+    }
+
+    func sceneForeground() {
+        guard detached, let surface else { return }
+        surface.playerLayer.player = player
+        detached = false
+    }
+
+    private func installRemote() {
+        guard remote.isEmpty else { return }
+        let center = MPRemoteCommandCenter.shared()
+        center.skipForwardCommand.preferredIntervals = [10]
+        center.skipBackwardCommand.preferredIntervals = [10]
+        let pairs: [(MPRemoteCommand, (MPRemoteCommandEvent) -> Void)] = [
+            (center.playCommand, { [weak self] _ in self?.player.playImmediately(atRate: self?.rate ?? 1) }),
+            (center.pauseCommand, { [weak self] _ in self?.player.pause() }),
+            (center.togglePlayPauseCommand, { [weak self] _ in self?.togglePlay() }),
+            (center.skipForwardCommand, { [weak self] _ in self?.skip(10) }),
+            (center.skipBackwardCommand, { [weak self] _ in self?.skip(-10) }),
+            (center.changePlaybackPositionCommand, { [weak self] event in
+                if let at = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime { self?.seek(to: at) }
+            }),
+        ]
+        for (command, handler) in pairs {
+            let token = command.addTarget { event in
+                handler(event)
+                return .success
+            }
+            remote.append((command, token))
+        }
+    }
+
+    private func removeRemote() {
+        for (command, token) in remote { command.removeTarget(token) }
+        remote = []
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+    }
+
+    private func loadArtwork(_ url: String?) {
+        artwork = nil
+        guard let url, let link = URL(string: url) else { return }
+        Task { [weak self] in
+            guard let reply = try? await URLSession.shared.data(from: link), let image = UIImage(data: reply.0) else { return }
+            let art = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+            await MainActor.run {
+                self?.artwork = art
+                self?.publishNowPlaying(force: true)
+            }
+        }
+    }
+
+    private func publishNowPlaying(force: Bool = false) {
+        guard let item, force || Date().timeIntervalSince(lastNowPlaying) > 4 else { return }
+        lastNowPlaying = Date()
+        var info: [String: Any] = [
+            MPMediaItemPropertyTitle: item.episode.map { $0.displayName } ?? item.title.name,
+            MPMediaItemPropertyArtist: item.episode.map { _ in item.title.name } ?? item.title.kindLabel,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: position,
+            MPMediaItemPropertyPlaybackDuration: duration,
+            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? Double(rate) : 0,
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.video.rawValue,
+        ]
+        if let artwork { info[MPMediaItemPropertyArtwork] = artwork }
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
 
     func reload() {
@@ -1720,7 +1810,10 @@ final class PlayerModel: ObservableObject {
             .sink { [weak self] state in
                 guard let self else { return }
                 let playing = state == .playing
-                if playing != self.isPlaying { self.isPlaying = playing }
+                if playing != self.isPlaying {
+                    self.isPlaying = playing
+                    self.publishNowPlaying(force: true)
+                }
                 let waiting = state == .waitingToPlayAtSpecifiedRate
                 if waiting != self.buffering {
                     self.buffering = waiting
@@ -1738,6 +1831,7 @@ final class PlayerModel: ObservableObject {
         }
         let text = Subtitles.cue(in: cues, at: seconds + subDelay)
         if text != cue { cue = text }
+        publishNowPlaying()
         var target: Marker?
         for which in [Marker.intro, .outro] where !passed.contains(which) {
             guard let span = marker(which), span.count == 2 else { continue }

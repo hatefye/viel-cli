@@ -47,6 +47,7 @@ struct AccountView: View {
                         .autocorrectionDisabled()
                     Toggle("Prefer dubbed anime", isOn: $core.settings.dub)
                     Toggle("Autoplay next episode", isOn: $core.settings.autoplay)
+                    Toggle("Keep playing in the background", isOn: $core.settings.backgroundAudio)
                     Picker("Skip buttons", selection: $core.settings.skipSeconds) {
                         ForEach([10, 15, 30], id: \.self) { seconds in
                             Text("\(seconds) seconds").tag(seconds)

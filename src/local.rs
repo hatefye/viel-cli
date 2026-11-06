@@ -436,6 +436,13 @@ struct DetailsOut {
     tagline: String,
     cast: Vec<String>,
     season_count: u32,
+    collection: Option<CollectionOut>,
+}
+
+#[derive(Serialize)]
+struct CollectionOut {
+    name: String,
+    parts: Vec<TitleOut>,
 }
 
 #[derive(Serialize)]
@@ -645,6 +652,10 @@ fn details_out(host: &str, d: Details) -> DetailsOut {
         tagline: d.tagline,
         cast: d.cast,
         season_count: d.seasons,
+        collection: d.collection.map(|c| CollectionOut {
+            name: c.name,
+            parts: c.parts.into_iter().map(|t| title_out(host, t)).collect(),
+        }),
     }
 }
 

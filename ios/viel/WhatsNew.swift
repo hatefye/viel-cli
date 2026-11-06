@@ -2,6 +2,8 @@ import SwiftUI
 
 enum ReleaseNotes {
     static let current: [(String, String, String)] = [
+        ("speaker.wave.2", "Background audio", "Turn it on under Playback and the sound keeps going with the screen off, with lock screen controls."),
+        ("film.stack", "Collections", "Movies that belong to a saga show the whole run on their page, in order."),
         ("arrow.down.circle", "Downloads are MP4 files", "Episodes and movies save as a single video file you can open from Files or share."),
         ("bell.badge", "New episode alerts", "Turn them on in Settings and get a notification when a show in My List airs. Upcoming episodes sit at the top of My List."),
         ("square.stack.3d.down.right", "Next episode ahead", "Optionally download the following episode as soon as one starts playing."),

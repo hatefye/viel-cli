@@ -216,6 +216,12 @@ pub struct Details {
     pub tagline: String,
     pub cast: Vec<String>,
     pub seasons: u32,
+    pub collection: Option<Collection>,
+}
+
+pub struct Collection {
+    pub name: String,
+    pub parts: Vec<Title>,
 }
 
 impl fmt::Display for Episode {
@@ -397,6 +403,10 @@ impl Api {
         let runtime = detail
             .runtime
             .or_else(|| detail.episode_run_time.and_then(|r| r.into_iter().next()));
+        let collection = detail
+            .belongs_to_collection
+            .filter(|_| kind == Kind::Movie)
+            .and_then(|c| self.collection(c.id));
         Ok(Details {
             title: Title {
                 id,
@@ -417,6 +427,38 @@ impl Api {
                 .map(|c| c.cast.into_iter().take(6).map(|m| m.name).collect())
                 .unwrap_or_default(),
             seasons: detail.number_of_seasons.unwrap_or(0),
+            collection,
+        })
+    }
+
+    fn collection(&self, id: u64) -> Option<Collection> {
+        let resp: CollectionResp = self
+            .client
+            .get(format!("{}/proxy/tmdb/collection/{id}", self.host))
+            .timeout(Duration::from_secs(10))
+            .send()
+            .ok()?
+            .json()
+            .ok()?;
+        let mut parts: Vec<(String, Title)> = resp
+            .parts
+            .into_iter()
+            .filter(|p| p.title.as_deref().map(|t| !t.is_empty()).unwrap_or(false))
+            .map(|p| {
+                let date = p.release_date.unwrap_or_default();
+                let title = Title {
+                    year: date.split('-').next().unwrap_or_default().to_string(),
+                    rating: p.vote_average.unwrap_or(0.0),
+                    overview: p.overview.filter(|s| !s.is_empty()),
+                    ..Title::bare(p.id, Kind::Movie, p.title.unwrap_or_default(), p.poster_path)
+                };
+                (if date.is_empty() { "9999".to_string() } else { date }, title)
+            })
+            .collect();
+        parts.sort_by(|a, b| a.0.cmp(&b.0));
+        (parts.len() > 1).then(|| Collection {
+            name: resp.name,
+            parts: parts.into_iter().map(|(_, t)| t).collect(),
         })
     }
 
@@ -500,6 +542,7 @@ impl Api {
             tagline: String::new(),
             cast: studios,
             seasons: 0,
+            collection: None,
         })
     }
 
@@ -1346,6 +1389,29 @@ struct DetailResp {
     number_of_seasons: Option<u32>,
     #[serde(default)]
     genres: Vec<GenreItem>,
+    belongs_to_collection: Option<CollectionStub>,
+}
+
+#[derive(Deserialize)]
+struct CollectionStub {
+    id: u64,
+}
+
+#[derive(Deserialize)]
+struct CollectionResp {
+    name: String,
+    #[serde(default)]
+    parts: Vec<CollectionPart>,
+}
+
+#[derive(Deserialize)]
+struct CollectionPart {
+    id: u64,
+    title: Option<String>,
+    release_date: Option<String>,
+    poster_path: Option<String>,
+    vote_average: Option<f64>,
+    overview: Option<String>,
 }
 
 #[derive(Deserialize)]

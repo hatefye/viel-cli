@@ -58,15 +58,21 @@ struct Details: Decodable {
     let tagline: String
     let cast: [String]
     let seasonCount: Int
+    let collection: Collection?
 
     enum CodingKeys: String, CodingKey {
-        case id, kind, name, year, rating, overview, poster, backdrop, genres, seasons, logo, runtime, tagline, cast
+        case id, kind, name, year, rating, overview, poster, backdrop, genres, seasons, logo, runtime, tagline, cast, collection
         case seasonCount = "season_count"
     }
 
     var title: Title {
         Title(id: id, kind: kind, name: name, year: year, rating: rating, overview: overview, poster: poster, backdrop: backdrop, genres: genres, seasons: seasons)
     }
+}
+
+struct Collection: Decodable {
+    let name: String
+    let parts: [Title]
 }
 
 struct HomeData: Decodable {

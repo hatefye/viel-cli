@@ -20,6 +20,7 @@ struct Settings: Codable {
     var autoDownloadNext = false
     var episodeAlerts = false
     var subDelay = 0.0
+    var backgroundAudio = false
 
     init() {}
 
@@ -42,6 +43,7 @@ struct Settings: Codable {
         autoDownloadNext = try box.decodeIfPresent(Bool.self, forKey: .autoDownloadNext) ?? autoDownloadNext
         episodeAlerts = try box.decodeIfPresent(Bool.self, forKey: .episodeAlerts) ?? episodeAlerts
         subDelay = try box.decodeIfPresent(Double.self, forKey: .subDelay) ?? subDelay
+        backgroundAudio = try box.decodeIfPresent(Bool.self, forKey: .backgroundAudio) ?? backgroundAudio
     }
 
     static func load() -> Settings {
@@ -350,6 +352,16 @@ enum Memory {
         var all = map("preferred")
         all[title] = source
         store("preferred", all)
+    }
+
+    static func dub(for title: String) -> Bool? {
+        map("dub")[title].map { $0 == "1" }
+    }
+
+    static func remember(dub: Bool, for title: String) {
+        var all = map("dub")
+        all[title] = dub ? "1" : "0"
+        store("dub", all)
     }
 
     static func fill(for title: String) -> Bool {

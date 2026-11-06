@@ -22,6 +22,7 @@ struct DetailsView: View {
     @State private var done: Set<String> = []
     @State private var downloaded: Set<String> = []
     @State private var resume: Resume?
+    @State private var other: Title?
     @Environment(\.openURL) private var openURL
 
     init(title: Title, resume: Resume?, autoplay: Bool = false) {
@@ -118,7 +119,7 @@ struct DetailsView: View {
                 .padding(.top, 8)
         }
         .task {
-            dub = core.settings.dub
+            dub = Memory.dub(for: title.key) ?? core.settings.dub
             await loadDetails()
             if !isMovie {
                 await loadEpisodes()
@@ -136,6 +137,7 @@ struct DetailsView: View {
             if let list, list.dub != value { Task { await loadEpisodes() } }
         }
         .fullScreenCover(item: $playing) { PlayerView(item: $0).environmentObject(core) }
+        .fullScreenCover(item: $other) { DetailsView(title: $0, resume: nil).environmentObject(core) }
     }
 
     private var header: some View {
@@ -261,6 +263,30 @@ struct DetailsView: View {
                 (Text("Genres: ").fontWeight(.semibold).foregroundColor(.white) + Text(shown.genres.joined(separator: ", ")).foregroundColor(Theme.muted))
                     .font(.system(size: 16))
             }
+            if isMovie, let collection = details?.collection, collection.parts.count > 1 {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(collection.name).font(.system(size: 18, weight: .bold)).padding(.top, 6)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(collection.parts) { part in
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Poster(url: part.poster, width: 104, height: 156, radius: 8)
+                                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).stroke(part.id == title.id ? Color.white : .clear, lineWidth: 2))
+                                    Text(part.name).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                                    Text(part.year.isEmpty ? "Coming" : part.year).font(.system(size: 11)).foregroundStyle(Theme.muted)
+                                }
+                                .frame(width: 104)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    guard part.id != title.id else { return }
+                                    Haptic.tap()
+                                    other = part
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if !isMovie {
                 Divider().overlay(Theme.border).padding(.top, 6)
             }
@@ -296,6 +322,7 @@ struct DetailsView: View {
                     Button {
                         Haptic.select()
                         dub.toggle()
+                        Memory.remember(dub: dub, for: title.key)
                     } label: {
                         Text(dub ? "DUB" : "SUB")
                             .font(.system(size: 13, weight: .bold))
