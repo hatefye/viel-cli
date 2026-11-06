@@ -46,6 +46,11 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>fetch</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>tv.viel.refresh</string>
 	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>

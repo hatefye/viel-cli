@@ -321,6 +321,14 @@ struct DetailsView: View {
                         } label: {
                             Label("Mark all as watched", systemImage: "checkmark.circle")
                         }
+                        Button {
+                            if let pick = visibleEpisodes.randomElement() {
+                                Haptic.tap()
+                                play(index: pick, startAt: nil)
+                            }
+                        } label: {
+                            Label("Play a random episode", systemImage: "shuffle")
+                        }
                     } label: {
                         Image(systemName: "ellipsis")
                             .font(.system(size: 17, weight: .semibold))

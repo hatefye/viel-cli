@@ -61,11 +61,20 @@ struct AccountView: View {
                         }
                     }
                     Toggle("Delete downloads after watching", isOn: $core.settings.autoDeleteWatched)
+                    Toggle("Download the next episode ahead", isOn: $core.settings.autoDownloadNext)
                     Toggle("Wi-Fi only", isOn: $core.settings.wifiDownloads)
                 } header: {
                     Text("Downloads")
                 } footer: {
-                    Text("Downloads keep going in the background and show up under Files → viel → Downloads. Wi-Fi only applies to downloads started after you turn it on.")
+                    Text("Downloads finish as MP4 files under Files → viel → Downloads. Next episode ahead queues the following episode as soon as one starts playing. Wi-Fi only applies to downloads started after you turn it on.")
+                }
+
+                Section {
+                    Toggle("New episode alerts", isOn: $core.settings.episodeAlerts)
+                } header: {
+                    Text("Alerts")
+                } footer: {
+                    Text("A notification when a show or anime in My List gets a new episode. Upcoming episodes also show at the top of My List.")
                 }
 
                 Section {
@@ -103,6 +112,16 @@ struct AccountView: View {
             .onChange(of: core.settings.maxHeight) { _, _ in Task { await core.pushSettings() } }
             .onChange(of: core.settings.subtitleLang) { _, _ in Task { await core.pushSettings() } }
             .onChange(of: core.settings.airplay) { _, _ in Task { await core.pushSettings() } }
+            .onChange(of: core.settings.episodeAlerts) { _, on in
+                guard on else { return }
+                Task {
+                    if await Alerts.authorize() {
+                        await Alerts.refresh(core: core)
+                    } else {
+                        core.settings.episodeAlerts = false
+                    }
+                }
+            }
         }
     }
 

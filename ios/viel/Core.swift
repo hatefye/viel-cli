@@ -17,6 +17,9 @@ struct Settings: Codable {
     var audioLang = ""
     var skipSeconds = 10
     var wifiDownloads = false
+    var autoDownloadNext = false
+    var episodeAlerts = false
+    var subDelay = 0.0
 
     init() {}
 
@@ -36,6 +39,9 @@ struct Settings: Codable {
         audioLang = try box.decodeIfPresent(String.self, forKey: .audioLang) ?? audioLang
         skipSeconds = try box.decodeIfPresent(Int.self, forKey: .skipSeconds) ?? skipSeconds
         wifiDownloads = try box.decodeIfPresent(Bool.self, forKey: .wifiDownloads) ?? wifiDownloads
+        autoDownloadNext = try box.decodeIfPresent(Bool.self, forKey: .autoDownloadNext) ?? autoDownloadNext
+        episodeAlerts = try box.decodeIfPresent(Bool.self, forKey: .episodeAlerts) ?? episodeAlerts
+        subDelay = try box.decodeIfPresent(Double.self, forKey: .subDelay) ?? subDelay
     }
 
     static func load() -> Settings {
@@ -270,6 +276,7 @@ final class Core: ObservableObject {
     }
 
     func enteredBackground() {
+        Alerts.schedule()
         Task {
             await flushLogs()
             let active = await downloads().contains(where: \.isActive)
@@ -282,6 +289,7 @@ final class Core: ObservableObject {
 
     func enteredForeground() {
         endKeepAlive()
+        Task { await Alerts.refresh(core: self) }
     }
 
     private func endKeepAlive() {
@@ -342,6 +350,16 @@ enum Memory {
         var all = map("preferred")
         all[title] = source
         store("preferred", all)
+    }
+
+    static func fill(for title: String) -> Bool {
+        map("fill")[title] == "1"
+    }
+
+    static func remember(fill: Bool, for title: String) {
+        var all = map("fill")
+        all[title] = fill ? "1" : nil
+        store("fill", all)
     }
 
     static func order(_ streams: [Stream], for title: String) -> [Stream] {

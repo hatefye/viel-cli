@@ -280,6 +280,14 @@ fn route(
                 .collect();
             json!(rows)
         }
+        ("GET", "calendar") => {
+            let rows: Vec<Value> = api
+                .calendar()?
+                .into_iter()
+                .map(|u| json!({ "kind": u.kind, "id": u.id, "name": u.name, "poster": poster_url(&host, Some(&u.poster)), "season": u.season, "episode": u.episode, "title": u.title, "airs_at": u.airs_at }))
+                .collect();
+            json!(rows)
+        }
         ("POST", "watchlist") => {
             let w: WatchIn = serde_json::from_slice(body)?;
             api.add_watchlist(&w.kind, w.id, &w.name, w.poster.as_deref())?;

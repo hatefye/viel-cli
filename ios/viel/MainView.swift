@@ -5,6 +5,8 @@ struct MainView: View {
     @EnvironmentObject private var core: Core
     @ObservedObject private var shortcuts = Shortcuts.shared
     @State private var tab = "home"
+    @State private var notes = false
+    @AppStorage("seenBuild") private var seenBuild = ""
 
     var body: some View {
         TabView(selection: $tab) {
@@ -38,7 +40,18 @@ struct MainView: View {
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .tint(.white)
-        .onAppear { consume(shortcuts.pending) }
+        .onAppear {
+            consume(shortcuts.pending)
+            if seenBuild.isEmpty {
+                seenBuild = core.build
+            } else if seenBuild != core.build, !ReleaseNotes.current.isEmpty {
+                notes = true
+            }
+        }
+        .sheet(isPresented: $notes, onDismiss: { seenBuild = core.build }) {
+            WhatsNewView(build: core.build).environmentObject(core)
+        }
+        .onChange(of: shortcuts.link) { _, value in if value != nil { tab = "home" } }
         .onChange(of: shortcuts.pending) { _, value in consume(value) }
         .onOpenURL { url in
             core.log("app", "open url \(url.absoluteString)")
@@ -54,6 +67,7 @@ struct MainView: View {
         switch action {
         case Shortcuts.search: tab = "search"
         case Shortcuts.list: tab = "list"
+        case Shortcuts.home: tab = "home"
         default: break
         }
         shortcuts.pending = nil
@@ -100,6 +114,7 @@ final class Shortcuts: ObservableObject {
     static let shared = Shortcuts()
     static let search = "tv.viel.search"
     static let list = "tv.viel.list"
+    static let home = "tv.viel.home"
 
     @Published var pending: String?
     @Published var link: DeepLink?
@@ -170,6 +185,7 @@ struct MyListView: View {
     @State private var resuming: Resume?
     @State private var playing: Playable?
     @State private var showHistory = false
+    @State private var upcoming: [Upcoming] = []
 
     private let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
 
@@ -184,6 +200,17 @@ struct MyListView: View {
                                 downloads.removeAll { $0.key == key }
                                 Task { await core.removeDownload(key) }
                             })
+                        }
+                        if !upcoming.isEmpty {
+                            Row(title: "Coming up") {
+                                ForEach(upcoming) { item in
+                                    UpcomingCard(item: item)
+                                        .onTapGesture {
+                                            Haptic.tap()
+                                            selected = Title.bare(id: item.showId, kind: item.kind, name: item.name, poster: item.poster)
+                                        }
+                                }
+                            }
                         }
                         if !resume.isEmpty {
                             Row(title: "Continue watching") {
@@ -270,6 +297,7 @@ struct MyListView: View {
         let home: HomeData? = try? await core.get("home")
         resume = home?.resume ?? []
         downloads = await core.downloads()
+        upcoming = await Alerts.fetch(core: core)
     }
 
     private func remove(_ row: Resume) async {

@@ -32,6 +32,9 @@ struct PlayerView: View {
     @State private var dragStart: Double?
     @State private var boosting = false
     @State private var nextSeasonItem: Playable?
+    @State private var queuedNext = false
+    @State private var away: Date?
+    @Environment(\.scenePhase) private var phase
 
     init(item: Playable) {
         _current = State(initialValue: item)
@@ -85,6 +88,27 @@ struct PlayerView: View {
         .onChange(of: model.isPlaying) { _, playing in
             if playing { scheduleHide() } else { show() }
         }
+        .onChange(of: phase) { _, value in
+            if value == .background {
+                away = Date()
+            } else if value == .active, let since = away {
+                away = nil
+                if Date().timeIntervalSince(since) > 480, !model.isPlaying, model.status == nil, current.offline == nil {
+                    model.reload()
+                }
+            }
+        }
+        .onChange(of: model.status) { _, value in
+            guard value == nil, core.settings.autoDownloadNext, current.offline == nil, !queuedNext, let next = upcoming else { return }
+            queuedNext = true
+            Task {
+                let keys = await core.downloads().map(\.key)
+                guard !keys.contains(next.downloadKey) else { return }
+                try? await core.download(next)
+                model.log("queued the next episode for download")
+            }
+        }
+        .onChange(of: core.settings.subDelay) { _, value in model.subDelay = value }
         .onChange(of: model.finished) { _, done in
             guard done else { return }
             if let key = current.offline, core.settings.autoDeleteWatched {
@@ -128,6 +152,9 @@ struct PlayerView: View {
         current = item
         dismissedNext = false
         nextSeasonItem = nil
+        queuedNext = false
+        fill = Memory.fill(for: item.title.key)
+        model.subDelay = core.settings.subDelay
         show()
         if let entry = nextSeason {
             let id = item.id
@@ -260,8 +287,16 @@ struct PlayerView: View {
                 if wantsFill != fill {
                     Haptic.select()
                     withAnimation(.smooth(duration: 0.3)) { fill = wantsFill }
+                    Memory.remember(fill: wantsFill, for: current.title.key)
                     model.log(wantsFill ? "fill screen" : "fit screen")
                 }
+            },
+            onTwoFingerTap: {
+                guard model.status == nil else { return }
+                Haptic.select()
+                model.subsEnabled.toggle()
+                showFlash(Flash(text: model.subsEnabled ? "Subtitles on" : "Subtitles off", right: nil, icon: "captions.bubble"), for: 0.9)
+                model.log(model.subsEnabled ? "subtitles on (two-finger tap)" : "subtitles off (two-finger tap)")
             }
         )
         .ignoresSafeArea()
@@ -695,7 +730,7 @@ struct PlayerView: View {
     private var flashLayer: some View {
         if let flash {
             let pill = HStack(spacing: 6) {
-                if flash.right == nil { Image(systemName: "forward.fill").font(.system(size: 13, weight: .semibold)) }
+                if flash.right == nil, let icon = flash.icon { Image(systemName: icon).font(.system(size: 13, weight: .semibold)) }
                 Text(flash.text).font(.system(size: 17, weight: .semibold))
             }
             .foregroundStyle(.white)
@@ -757,6 +792,7 @@ struct PlayerView: View {
 struct Flash: Equatable {
     let text: String
     let right: Bool?
+    var icon: String? = "forward.fill"
 }
 
 struct Level: Equatable {
@@ -775,6 +811,7 @@ struct TouchPad: UIViewRepresentable {
     let onHold: (Bool) -> Void
     let onSwipe: (Bool, Double, SwipePhase) -> Void
     let onPinch: (Bool) -> Void
+    let onTwoFingerTap: () -> Void
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
@@ -785,12 +822,15 @@ struct TouchPad: UIViewRepresentable {
         let double = UITapGestureRecognizer(target: owner, action: #selector(Coordinator.doubleTapped(_:)))
         double.numberOfTapsRequired = 2
         single.require(toFail: double)
+        let pair = UITapGestureRecognizer(target: owner, action: #selector(Coordinator.pairTapped(_:)))
+        pair.numberOfTouchesRequired = 2
+        single.require(toFail: pair)
         let hold = UILongPressGestureRecognizer(target: owner, action: #selector(Coordinator.held(_:)))
         hold.minimumPressDuration = 0.6
         let pan = UIPanGestureRecognizer(target: owner, action: #selector(Coordinator.panned(_:)))
         pan.maximumNumberOfTouches = 1
         let pinch = UIPinchGestureRecognizer(target: owner, action: #selector(Coordinator.pinched(_:)))
-        for recognizer in [single, double, hold, pan, pinch] as [UIGestureRecognizer] {
+        for recognizer in [single, double, pair, hold, pan, pinch] as [UIGestureRecognizer] {
             recognizer.delegate = owner
             recognizer.cancelsTouchesInView = false
             view.addGestureRecognizer(recognizer)
@@ -821,6 +861,10 @@ struct TouchPad: UIViewRepresentable {
 
         @objc func tapped(_ recognizer: UITapGestureRecognizer) {
             pad.onTap()
+        }
+
+        @objc func pairTapped(_ recognizer: UITapGestureRecognizer) {
+            pad.onTwoFingerTap()
         }
 
         @objc func doubleTapped(_ recognizer: UITapGestureRecognizer) {
@@ -1195,6 +1239,7 @@ final class PlayerModel: ObservableObject {
     @Published var sleepAtEnd = false
     @Published var showStats = false
     @Published var stats: [String] = []
+    var subDelay = 0.0
 
     var pip: AVPictureInPictureController?
 
@@ -1346,10 +1391,18 @@ final class PlayerModel: ObservableObject {
         return left >= 60 ? "\(Int(left / 60) + (Int(left) % 60 > 0 ? 1 : 0))m" : "\(Int(left))s"
     }
 
+    func reload() {
+        guard let item, let core, item.offline == nil else { return }
+        let at = position
+        log("reload after a long sleep at \(Int(at))s")
+        Task { await self.start(item.resuming(at: at), core: core, refreshing: true) }
+    }
+
     func setSleep(minutes: Int?, atEnd: Bool = false) {
         sleepTask?.cancel()
         sleepTask = nil
         sleepAtEnd = atEnd
+        player.volume = 1
         guard let minutes else {
             sleepAt = nil
             log(atEnd ? "sleep at end of episode" : "sleep timer off")
@@ -1359,10 +1412,17 @@ final class PlayerModel: ObservableObject {
         sleepAt = when
         log("sleep in \(minutes)m")
         sleepTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(minutes) * 60_000_000_000)
+            let fade: UInt64 = 20
+            try? await Task.sleep(nanoseconds: (UInt64(minutes) * 60 - fade) * 1_000_000_000)
             guard !Task.isCancelled, let self else { return }
+            for step in 1...40 {
+                try? await Task.sleep(nanoseconds: fade * 1_000_000_000 / 40)
+                guard !Task.isCancelled else { return }
+                await MainActor.run { self.player.volume = Float(1 - Double(step) / 40) }
+            }
             await MainActor.run {
                 self.player.pause()
+                self.player.volume = 1
                 self.sleepAt = nil
                 self.log("sleep timer fired")
             }
@@ -1676,7 +1736,7 @@ final class PlayerModel: ObservableObject {
         if let length = player.currentItem?.duration.seconds, length.isFinite, length > 0, length != duration {
             duration = length
         }
-        let text = Subtitles.cue(in: cues, at: seconds)
+        let text = Subtitles.cue(in: cues, at: seconds + subDelay)
         if text != cue { cue = text }
         var target: Marker?
         for which in [Marker.intro, .outro] where !passed.contains(which) {

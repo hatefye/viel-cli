@@ -949,6 +949,87 @@ impl Api {
         Ok(resp.json::<WatchResp>()?.items)
     }
 
+    pub fn calendar(&self) -> Result<Vec<Upcoming>> {
+        let entries = self.watchlist()?;
+        let mut rows: Vec<Upcoming> = thread::scope(|s| {
+            let jobs: Vec<_> = entries
+                .iter()
+                .map(|w| s.spawn(move || self.upcoming(w)))
+                .collect();
+            jobs.into_iter()
+                .filter_map(|j| j.join().ok())
+                .flatten()
+                .collect()
+        });
+        rows.sort_by_key(|r| r.airs_at);
+        Ok(rows)
+    }
+
+    fn upcoming(&self, w: &WatchEntry) -> Vec<Upcoming> {
+        let Ok(id) = w.content_id.parse::<u64>() else { return Vec::new() };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let week = 7 * 86_400;
+        let fetch = |url: String| {
+            self.client
+                .get(url)
+                .timeout(Duration::from_secs(12))
+                .send()
+                .ok()
+        };
+        let mut out = Vec::new();
+        match w.kind.as_str() {
+            "anime" => {
+                let Some(info) = fetch(format!("{}/miruro/info/{}", self.host, id))
+                    .and_then(|r| r.json::<AnimeAiring>().ok())
+                else {
+                    return out;
+                };
+                if let Some(next) = info.next {
+                    if next.airing_at + week > now {
+                        out.push(Upcoming {
+                            kind: "anime".into(),
+                            id,
+                            name: w.title.clone(),
+                            poster: w.poster.clone(),
+                            season: 0,
+                            episode: next.episode as u32,
+                            title: String::new(),
+                            airs_at: next.airing_at,
+                        });
+                    }
+                }
+            }
+            "tv" => {
+                let Some(info) = fetch(format!("{}/proxy/tmdb/tv/{}", self.host, id))
+                    .and_then(|r| r.json::<TvAiring>().ok())
+                else {
+                    return out;
+                };
+                for ep in [info.last_episode_to_air, info.next_episode_to_air].into_iter().flatten() {
+                    let Some(at) = ep.air_date.as_deref().and_then(civil_to_unix) else { continue };
+                    if at + week < now || at > now + 60 * 86_400 {
+                        continue;
+                    }
+                    out.push(Upcoming {
+                        kind: "tv".into(),
+                        id,
+                        name: w.title.clone(),
+                        poster: w.poster.clone(),
+                        season: ep.season_number,
+                        episode: ep.episode_number,
+                        title: ep.name.clone(),
+                        airs_at: at,
+                    });
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
     pub fn add_watchlist(
         &self,
         kind: &str,
@@ -1412,6 +1493,60 @@ struct WatchResp {
     items: Vec<WatchEntry>,
 }
 
+pub struct Upcoming {
+    pub kind: String,
+    pub id: u64,
+    pub name: String,
+    pub poster: String,
+    pub season: u32,
+    pub episode: u32,
+    pub title: String,
+    pub airs_at: u64,
+}
+
+#[derive(Deserialize)]
+struct AnimeAiring {
+    #[serde(rename = "nextAiringEpisode")]
+    next: Option<AiringNext>,
+}
+
+#[derive(Deserialize)]
+struct AiringNext {
+    #[serde(rename = "airingAt", deserialize_with = "num")]
+    airing_at: u64,
+    #[serde(deserialize_with = "num")]
+    episode: u64,
+}
+
+#[derive(Deserialize)]
+struct TvAiring {
+    next_episode_to_air: Option<TvEpisodeStub>,
+    last_episode_to_air: Option<TvEpisodeStub>,
+}
+
+#[derive(Deserialize)]
+struct TvEpisodeStub {
+    air_date: Option<String>,
+    #[serde(default)]
+    episode_number: u32,
+    #[serde(default)]
+    season_number: u32,
+    #[serde(default)]
+    name: String,
+}
+
+fn civil_to_unix(date: &str) -> Option<u64> {
+    let mut parts = date.split('-').map(|p| p.parse::<i64>().ok());
+    let (y, m, d) = (parts.next()??, parts.next()??, parts.next()??);
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    u64::try_from(days * 86_400 + 20 * 3_600).ok()
+}
+
 #[derive(Deserialize)]
 pub struct WatchEntry {
     #[serde(rename = "type")]
@@ -1711,4 +1846,30 @@ struct SubRaw {
     lang: Option<String>,
     label: Option<String>,
     r#ref: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn civil_dates() {
+        assert_eq!(civil_to_unix("1970-01-01"), Some(72_000));
+        assert_eq!(civil_to_unix("2026-08-09"), Some(1_786_305_600));
+        assert_eq!(civil_to_unix("nope"), None);
+    }
+
+    #[test]
+    #[ignore]
+    fn upcoming_rows() {
+        let api = Api::new("https://viel.tv", None);
+        let entry = WatchEntry { kind: "tv".into(), content_id: "94997".into(), title: "House of the Dragon".into(), poster: String::new() };
+        for row in api.upcoming(&entry) {
+            println!("{} S{} E{} {} at {}", row.name, row.season, row.episode, row.title, row.airs_at);
+        }
+        let entry = WatchEntry { kind: "anime".into(), content_id: "21".into(), title: "One Piece".into(), poster: String::new() };
+        for row in api.upcoming(&entry) {
+            println!("{} E{} at {}", row.name, row.episode, row.airs_at);
+        }
+    }
 }

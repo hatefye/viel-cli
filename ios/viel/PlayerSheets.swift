@@ -417,6 +417,30 @@ struct SubtitlesSheet: View {
                             Spacer()
                             Toggle("", isOn: $core.settings.subBackground).labelsHidden().tint(.white)
                         }
+                        HStack(spacing: 12) {
+                            Text("Timing").font(.system(size: 17)).foregroundStyle(.white)
+                            Spacer()
+                            Button {
+                                Haptic.select()
+                                core.settings.subDelay = max(core.settings.subDelay - 0.25, -10)
+                            } label: {
+                                Image(systemName: "minus").font(.system(size: 15, weight: .semibold)).frame(width: 34, height: 34)
+                            }
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.circle)
+                            Text(core.settings.subDelay == 0 ? "In sync" : String(format: "%+.2fs", core.settings.subDelay))
+                                .font(.system(size: 15, weight: .semibold))
+                                .monospacedDigit()
+                                .frame(minWidth: 74)
+                            Button {
+                                Haptic.select()
+                                core.settings.subDelay = min(core.settings.subDelay + 0.25, 10)
+                            } label: {
+                                Image(systemName: "plus").font(.system(size: 15, weight: .semibold)).frame(width: 34, height: 34)
+                            }
+                            .buttonStyle(.glass)
+                            .buttonBorderShape(.circle)
+                        }
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("Position").font(.system(size: 17)).foregroundStyle(.white)
