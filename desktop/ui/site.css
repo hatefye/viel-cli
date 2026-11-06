@@ -97,7 +97,8 @@
   html.hero-still .hero-dot.active::after{animation:none}
   @keyframes dotfill{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 
-  .wrap,.container{max-width:1600px;margin:0 auto;padding:0 clamp(20px,calc(5vw / var(--z)),64px)}
+  :root{--gutter:clamp(20px,calc(5vw / var(--z)),64px);--rail-gap:16px;--card-w:clamp(176px,calc((min(calc(100vw / var(--z)),1600px) - 2 * var(--gutter) - 6 * var(--rail-gap)) / 7),260px)}
+  .wrap,.container{max-width:1600px;margin:0 auto;padding:0 var(--gutter)}
   .content{position:relative;z-index:3;margin-top:0}
 
   /* rails */
@@ -127,7 +128,7 @@
   .rail-arrow.hidden{opacity:0!important;pointer-events:none}
 
   /* landscape card (Trending / backdrop rails) — title + year BELOW */
-  .lcard{scroll-snap-align:start;flex:0 0 auto;width:clamp(280px,calc(26vw / var(--z)),384px);cursor:pointer}
+  .lcard{scroll-snap-align:start;flex:0 0 auto;width:calc(var(--card-w) * 1.78);cursor:pointer}
   .lthumb{position:relative;width:100%;aspect-ratio:16/9;border-radius:14px;overflow:hidden;border:1px solid var(--card-brd);background:var(--bg-2)}
   .lthumb img{width:100%;height:100%;object-fit:cover;transition:transform .3s}
   .lcard:hover .lthumb img{transform:scale(1.05)}
@@ -624,7 +625,7 @@
   .rail-more[aria-expanded="true"] svg{transform:rotate(90deg)}
   .rail-scroll.expanded{flex-wrap:wrap;overflow:visible;scroll-snap-type:none;row-gap:26px}
   .rail-wrap:has(.rail-scroll.expanded) .rail-arrow{display:none}
-  .card{width:176px}
+  .card{width:var(--card-w)}
   .card-poster{border-radius:12px}
   .card-poster::after{border-radius:12px}
   .card-title{margin-top:10px;font-size:14px;color:#fff}
@@ -641,7 +642,7 @@
   .card:hover .card-meta .star,.top10-card:hover .info .m .star{color:#e8c15a}
   /* Top 10: compact cards, the rank as a solid numeral tucked under the poster's corner */
   .rail-scroll.is-top10{padding-left:14px;margin-left:-14px;gap:20px}
-  .top10-card{display:block;width:176px;align-items:initial}
+  .top10-card{display:block;width:var(--card-w);align-items:initial}
   .top10-card:hover .top10-poster{transform:none}
   .top10-card:hover .top10-poster img{transform:scale(1.05)}
   .top10-poster{width:100%;border-radius:12px;overflow:visible;border:0;background:none;transition:none}
@@ -674,7 +675,8 @@
   .footer{margin-top:28px}
   .chips{margin-bottom:28px}
   @media (max-width:720px){
-    .card,.top10-card{width:136px}
+    .card,.top10-card{width:var(--card-w)}
+    :root{--card-w:clamp(132px,calc((100vw / var(--z) - 32px - 3 * var(--rail-gap)) / 3.3),176px)}
     .top10-rank{width:36px;left:8px;padding:5px 0 10px}
     .top10-rank small{font-size:7.5px}
     .top10-rank b{font-size:19px}

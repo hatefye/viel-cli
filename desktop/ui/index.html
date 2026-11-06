@@ -4,8 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>viel</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Anton&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Anton&family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="site.css">
+<link rel="stylesheet" href="player.css">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -70,69 +71,211 @@
   <div id="info-panel" class="ip"></div>
 </div>
 
-<div id="player" class="player-root" hidden>
-  <header class="topbar">
-    <div class="tb-left">
-      <button class="back" id="pl-back" aria-label="Back">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        <span class="back-label">Back</span>
-      </button>
-      <span class="tb-sep">/</span>
-      <span class="tb-title" id="pl-name"></span>
-      <span class="tb-source" id="pl-source"></span>
+<div id="player-root" class="player-root ui-scale-m" hidden>
+<div id="source-toast" class="source-toast"></div>
+<div class="seek-flash left" id="seek-left" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 5V1l-5 5 5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6h-2c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8.01-8z"></path></svg><span>10s</span></div>
+<div class="seek-flash right" id="seek-right" aria-hidden="true"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 13c0 3.31-2.69 6-6 6s-6-2.69-6-6 2.69-6 6-6v4l5-5-5-5v4c-4.42 0-8 3.58-8 8s3.58 8 8 8 8-3.58 8-8h-2z"></path></svg><span>10s</span></div>
+<div class="play-burst" id="play-burst" aria-hidden="true"><svg class="p" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg><svg class="q" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"></rect><rect x="14" y="5" width="4" height="14" rx="1.2"></rect></svg></div>
+<div class="buffer-ring hidden" id="buffer-ring" aria-hidden="true"><span></span></div>
+<div class="m-center" id="m-center">
+      <button id="m-rew" type="button" aria-label="Rewind 10 seconds"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 5V1l-5 5 5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6h-2c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8.01-8z"></path></svg></button>
+      <button id="m-play" type="button" aria-label="Play/Pause"><svg class="p" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg><svg class="q" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"></rect><rect x="14" y="5" width="4" height="14" rx="1.2"></rect></svg></button>
+      <button id="m-fwd" type="button" aria-label="Forward 10 seconds"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 13c0 3.31-2.69 6-6 6s-6-2.69-6-6 2.69-6 6-6v4l5-5-5-5v4c-4.42 0-8 3.58-8 8s3.58 8 8 8 8-3.58 8-8h-2z"></path></svg></button>
     </div>
-    <div class="tb-center" id="pl-center-title"><span class="tb-ep" id="pl-ep"></span><span class="tb-epname" id="pl-epname"></span></div>
-    <div class="tb-right"></div>
-  </header>
-  <div class="pause-overlay"></div>
-  <div class="pause-info">
-    <img class="show-logo" id="pl-logo" alt="" hidden>
-    <h1 class="show-title" id="pl-showtitle"></h1>
-    <div class="meta" id="pl-meta"></div>
-    <h2 class="ep-title" id="pl-eptitle"></h2>
-    <p class="desc" id="pl-desc"></p>
-  </div>
-  <div class="center-state">
-    <div id="pl-flash" class="flash"></div>
-    <div id="pl-spinner" class="spin" hidden></div>
-    <div id="pl-status" class="status" hidden></div>
-  </div>
-  <button id="pl-skip" class="skip-btn" hidden></button>
-  <div id="pl-next" class="next-card" hidden></div>
-  <div class="controls" id="pl-controls">
-    <div class="progress-row">
-      <div class="progress" id="pl-scrub">
-        <div class="rail"><div class="buffer"></div><div class="play"></div><div class="thumb"></div><div class="markers"></div></div>
-        <div class="hover-time" hidden></div>
+<div id="notif-stack" class="notif-stack"></div>
+<div id="scanning-overlay" class="scanning-overlay hidden">
+      <div class="finder" id="finder">
+        <div class="finder-head" id="finder-head">
+          <img id="finder-poster" class="finder-poster" alt="" >
+          <div class="finder-meta">
+            <div class="finder-kicker" id="finder-kicker"></div>
+            <div class="finder-title" id="finder-title"></div>
+            <div class="finder-ep" id="finder-ep"></div>
+          </div>
+        </div>
+        <div class="finder-status">
+          <div class="scanning-spinner"></div>
+          <div class="finder-text">
+            <div id="scanning-msg" class="scanning-msg"></div>
+            <div class="finder-sub" id="finder-sub"></div>
+          </div>
+        </div>
+        <div class="finder-bar" id="finder-bar"><div class="finder-bar-fill" id="finder-bar-fill" style="width:0%"></div></div>
+        <div class="finder-sources-label" id="finder-sources-label">Sources <span id="finder-count"></span></div>
+        <div class="finder-sources" id="finder-sources"></div>
       </div>
     </div>
-    <div class="controls-row">
-      <div class="controls-left">
-        <button id="pl-play" class="icon-btn" aria-label="Play or pause"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></button>
-        <button id="pl-rew" class="icon-btn" aria-label="Rewind"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a8 8 0 1 1-7.4 11M4 5v6h6"/></svg><b class="skipnum"></b></button>
-        <button id="pl-ffw" class="icon-btn" aria-label="Forward"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a8 8 0 1 0 7.4 11M20 5v6h-6"/></svg><b class="skipnum"></b></button>
-        <button id="pl-mute" class="icon-btn" aria-label="Mute"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 4V6L7 10H3zm13.5 2c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg></button>
-        <input id="pl-vol" class="volume-slider" type="range" min="0" max="100" step="1" value="100" aria-label="Volume">
-        <div class="time"><span id="pl-pos">0:00</span> / <span id="pl-dur">0:00</span></div>
+<button id="skip-intro" class="skip-btn hidden">Skip Intro ▶</button>
+<div id="next-ep-overlay" class="next-ep-overlay hidden">
+      <div class="next-ep-card">
+        <div class="next-ep-header">Up Next</div>
+        <div class="next-ep-show" id="next-ep-show"></div>
+        <div class="next-ep-title" id="next-ep-title"></div>
+        <div class="next-ep-bar-wrap"><div class="next-ep-bar" id="next-ep-bar"></div></div>
+        <div class="next-ep-footer">
+          <span class="next-ep-countdown-label">Playing in <span id="next-ep-countdown">10</span>s</span>
+          <div class="next-ep-actions">
+            <button id="next-ep-now" class="next-ep-btn">Play Now</button>
+            <button id="next-ep-cancel" class="next-ep-btn cancel">Cancel</button>
+          </div>
+        </div>
       </div>
-      <div class="controls-right">
-        <button id="pl-episodes" class="btn-with-label" aria-label="Episodes">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="1.5"/><path d="M19 8v8M22 10v4"/></svg><span class="lbl">Episodes</span>
+    </div>
+<div class="end-actions hidden" id="end-actions">
+      <button type="button" id="end-replay">Replay</button>
+      <button type="button" id="end-next"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5l8 7-8 7V5zm10 0h2v14h-2V5z"></path></svg>Next episode</button>
+    </div>
+<header class="topbar">
+      <div class="tb-left">
+        <button type="button" class="back" id="pl-back" aria-label="Back">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"></path></svg>
+          <span class="back-label">Back</span>
         </button>
-        <button id="pl-nextbtn" class="icon-btn" aria-label="Next episode" title="Next episode"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5l8 7-8 7V5zm10 0h2v14h-2V5z"/></svg></button>
-        <button id="pl-cc" class="icon-btn" aria-label="Subtitles" title="Subtitles"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 10H8a2 2 0 0 0 0 4h2M16 10h-2a2 2 0 0 0 0 4h2"/></svg></button>
-        <button id="pl-audio" class="icon-btn" aria-label="Audio" title="Audio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 0 1 16 0v5a2 2 0 0 1-2 2h-1v-6h3M4 12v5a2 2 0 0 0 2 2h1v-6H4"/></svg></button>
-        <button id="pl-quality" class="icon-btn" aria-label="Quality and source" title="Quality"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M8 9v4M8 11h3M11 9v4M14 9h2a2 2 0 0 1 0 4h-2z"/></svg></button>
-        <button id="pl-speed" class="btn-with-label" title="Speed"><span class="lbl">1×</span></button>
-        <button id="pl-gear" class="icon-btn" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1Z"/></svg></button>
-        <button id="pl-mini" class="icon-btn" aria-label="Mini player" title="Mini player"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="11" width="7" height="5" rx="1" fill="currentColor" stroke="none"/></svg></button>
-        <button id="pl-full" class="icon-btn" aria-label="Fullscreen" title="Fullscreen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+        <span class="tb-sep">/</span>
+        <span class="tb-title" id="tb-title"></span>
+        <button id="title-info-btn" class="tb-icon" aria-label="About this title" title="About this title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7M12 17h.01"></path></svg>
+        </button>
+        <button id="mylist-btn" class="tb-icon" aria-label="Add to My List" title="My List">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M6 4h12a1 1 0 0 1 1 1v15.4a.6.6 0 0 1-.92.5L12 17.5l-6.08 3.9A.6.6 0 0 1 5 20.9V5a1 1 0 0 1 1-1z"></path></svg>
+        </button>
+      </div>
+      <div class="tb-center" id="tb-center"><span class="tb-ep" id="tb-ep"></span><span class="tb-epname" id="tb-epname"></span></div>
+      <div class="tb-right right-top" aria-hidden="true"></div>
+    </header>
+<div class="pause-overlay" aria-hidden="true"></div>
+<div class="pause-info">
+      <img class="show-logo" id="show-logo" alt="" style="display:none">
+      <h1 class="show-title" id="show-title-text" style="display:none"></h1>
+      <div class="meta" id="pause-meta"></div>
+      <h2 class="ep-title" id="pause-ep-title"></h2>
+      <p class="desc" id="pause-desc"></p>
+    </div>
+<div class="controls" id="controls">
+      <div class="progress-row">
+        <div class="progress" id="progress-wrap">
+          <div class="rail" id="progress-rail">
+            <div class="buffer" id="progress-buffer"></div>
+            <div class="play" id="progress-play"></div>
+            <div class="thumb" id="progress-thumb"></div>
+            <div id="seg-markers"></div>
+          </div>
+          <input id="seek" class="seek" type="range" min="0" max="100" step="0.01" value="0" aria-label="Seek">
+        </div>
+        <div class="time time-m" id="time-m" aria-hidden="true">0:00</div>
+      </div>
+
+      <div class="controls-row">
+        <div class="controls-left">
+          <button id="playpause" class="icon-btn" aria-label="Play/Pause">
+            <svg id="icon-pause" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="5" width="4" height="14" rx="1.2"></rect><rect x="14" y="5" width="4" height="14" rx="1.2"></rect></svg>
+            <svg id="icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+          </button>
+          <button id="rew10" class="icon-btn" title="-10s" aria-label="Rewind 10 seconds">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M11.99 5V1l-5 5 5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6h-2c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8.01-8zM10.89 16h-.85v-3.26l-1.01.31v-.69l1.77-.63h.09V16zm4.28-1.76c0 .32-.03.6-.1.82s-.17.42-.29.57-.28.26-.45.33-.37.1-.59.1-.41-.03-.59-.1-.33-.18-.46-.33-.23-.34-.3-.57-.11-.5-.11-.82v-.74c0-.32.03-.6.1-.82s.17-.42.29-.57.28-.26.45-.33.37-.1.59-.1.41.03.59.1.33.18.46.33.23.34.3.57.11.5.11.82v.74zm-.85-.86c0-.19-.01-.35-.04-.48s-.07-.23-.12-.31-.11-.14-.19-.17-.16-.05-.25-.05-.18.02-.25.05-.14.09-.19.17-.09.18-.12.31-.04.29-.04.48v.97c0 .19.01.35.04.48s.07.24.12.32.11.14.19.17.16.05.25.05.18-.02.25-.05.14-.09.19-.17.09-.19.11-.32.04-.29.04-.48v-.97z"></path></svg>
+          </button>
+          <button id="fwd10" class="icon-btn" title="+10s" aria-label="Forward 10 seconds">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18 13c0 3.31-2.69 6-6 6s-6-2.69-6-6 2.69-6 6-6v4l5-5-5-5v4c-4.42 0-8 3.58-8 8s3.58 8 8 8 8-3.58 8-8h-2zm-7.46 2.22V12.6l-.84.31v-.59l1.49-.52h.05v3.42h-.7zm3.42-1.16v.34c0 .27-.03.51-.08.71s-.14.37-.24.5-.23.23-.38.29-.32.09-.5.09-.34-.03-.49-.09-.28-.16-.39-.29-.19-.3-.25-.5-.09-.44-.09-.71v-.51c0-.27.03-.51.09-.71s.14-.37.24-.5.23-.23.39-.29.32-.09.5-.09.34.03.49.09c.15.06.28.16.38.29s.19.3.24.5.09.44.09.71v.18zm-.7-.41c0-.16-.01-.29-.03-.4s-.05-.2-.1-.27-.1-.12-.17-.15-.14-.05-.23-.05-.17.02-.23.05-.12.07-.16.15-.08.16-.1.27-.03.24-.03.4v.45c0 .16.01.29.03.4s.06.2.1.27.1.12.16.15.14.05.23.05.17-.02.23-.05.12-.08.16-.15.08-.16.09-.27.03-.24.03-.4v-.45z"></path></svg>
+          </button>
+          <button id="mute" class="icon-btn" aria-label="Mute / unmute" title="Mute"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 4V6L7 10H3zm13.5 2c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"></path></svg></button>
+          <input id="volume" class="volume-slider desktop-only" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" title="Volume" >
+          <div class="time" id="time">0:00 / 0:00</div>
+        </div>
+
+        <div class="controls-right">
+          <button id="episodes-toggle" class="btn-with-label" aria-label="Episodes">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="1.5"></rect><path d="M19 8v8M22 10v4"></path></svg>
+            <span class="lbl">Episodes</span>
+          </button>
+          <button id="next-episode" class="icon-btn" aria-label="Next episode" title="Next episode">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5l8 7-8 7V5zm10 0h2v14h-2V5z"></path></svg>
+          </button>
+          <button class="icon-btn settings-trigger" aria-label="Subtitles" title="Subtitles" data-open-tab="subtitles">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zM4 12h4v2H4v-2zm10 6H4v-2h10v2zm6 0h-4v-2h4v2zm0-4H10v-2h10v2z"></path></svg>
+          </button>
+          <button class="icon-btn settings-trigger" aria-label="Servers" title="Servers / source" data-open-tab="servers">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"><path d="M19 16.9A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 16.9"></path></svg>
+          </button>
+          <button id="settings-cog" class="icon-btn settings-trigger" aria-label="Settings" title="Settings" data-open-tab="home">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94a7.07 7.07 0 0 0 0-1.88l2.03-1.58a.5.5 0 0 0 .12-.61l-1.92-3.32a.5.5 0 0 0-.59-.22l-2.39.96a7.03 7.03 0 0 0-1.62-.94l-.36-2.54A.5.5 0 0 0 13.91 2h-3.84a.5.5 0 0 0-.5.42l-.36 2.54c-.59.24-1.13.56-1.62.94l-2.39-.96a.5.5 0 0 0-.59.22L2.69 8.48a.5.5 0 0 0 .12.61l2.03 1.58a7.07 7.07 0 0 0 0 1.88L2.81 14.13a.5.5 0 0 0-.12.61l1.92 3.32a.5.5 0 0 0 .59.22l2.39-.96c.49.38 1.03.7 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96a.5.5 0 0 0 .59-.22l1.92-3.32a.5.5 0 0 0-.12-.61l-2.03-1.58zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"></path></svg>
+          </button>
+          <button id="pip-btn" class="icon-btn desktop-only" aria-label="Picture in picture" title="Picture in picture">
+            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 7h-8v6h8V7zm2-4H3C1.9 3 1 3.9 1 5v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V4.98h18V19z"></path></svg>
+          </button>
+          <button id="fullscreen" class="icon-btn" aria-label="Fullscreen" title="Fullscreen">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"></path></svg>
+          </button>
+        </div>
       </div>
     </div>
-  </div>
-  <div id="pl-stats" class="stats" hidden></div>
-  <div id="pl-menu" class="pmenu" hidden></div>
-  <aside id="pl-panel" class="episodes-drawer" hidden></aside>
+<div class="settings-panel-wrap" id="settings-panel-wrap">
+      <div class="settings-tabs-row">
+        <div class="settings-tabs">
+          <button class="tab" data-tab="quality">Quality</button>
+          <button class="tab" data-tab="subtitles">Subtitles</button>
+          <button class="tab tab-audio" data-tab="audio">Audio</button>
+          <button class="tab" data-tab="servers">Servers</button>
+          <button class="tab tab-download" data-tab="download">Download</button>
+          <button class="tab" data-tab="speed">Speed</button>
+          <button class="tab" data-tab="display">Display</button>
+        </div>
+        <button class="settings-close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <aside class="settings-panel">
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <div class="menu-head" id="menu-head">
+          <button class="menu-back" id="settings-back" type="button" aria-label="Back">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"></path></svg>
+          </button>
+          <span class="menu-title" id="settings-title">Settings</span>
+          <button class="menu-close" type="button" aria-label="Close">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+          </button>
+        </div>
+        <div class="settings-body">
+          <div class="settings-pane" data-pane="home" id="pane-home"></div>
+          <div class="settings-pane" data-pane="quality" id="pane-quality"></div>
+          <div class="settings-pane" data-pane="audio" id="pane-audio"></div>
+          <div class="settings-pane" data-pane="servers" id="pane-servers"></div>
+          <div class="settings-pane" data-pane="download" id="pane-download"></div>
+          <div class="settings-pane" data-pane="speed" id="pane-speed"></div>
+          <div class="settings-pane" data-pane="display" id="pane-display"></div>
+        </div>
+        <button class="sheet-close" type="button">Close</button>
+      </aside>
+    </div>
+<aside class="drawer" id="drawer" aria-hidden="true">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <div class="drawer-top">
+        <div class="sheet-lead" id="sheet-lead"></div>
+        <div class="search-pill">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg>
+          <input id="search-input" type="text" placeholder="Episode # or title" autocomplete="off">
+        </div>
+        <div class="season-pill-wrap" id="season-pill-wrap">
+          <button class="season-pill" type="button" id="season-pill-btn">
+            <span id="season-pill-label"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"></path></svg>
+          </button>
+          <div class="season-dropdown" id="season-dropdown"></div>
+        </div>
+        <button class="autonext on" type="button" id="autonext-btn">
+          <span>Auto next</span>
+          <span class="switch"></span>
+        </button>
+        <button class="drawer-close" aria-label="Close" id="drawer-close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div class="season-banner">
+        <div class="title" id="season-banner-title"></div>
+        <p class="desc" id="season-banner-desc"></p>
+      </div>
+      <div class="episodes-stack sheet" id="episodes-stack"></div>
+      <button class="sheet-close" id="drawer-sheet-close" type="button">Close</button>
+    </aside>
 </div>
 
 <div id="toast"></div>

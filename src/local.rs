@@ -612,7 +612,7 @@ fn title_out(host: &str, t: Title) -> TitleOut {
         rating: t.rating,
         overview: t.overview,
         poster: poster_url(host, t.poster_path.as_deref()),
-        backdrop: image_url(host, t.backdrop_path.as_deref(), "w1280"),
+        backdrop: image_url(host, t.backdrop_path.as_deref(), "original"),
         genres: t.genres,
         seasons: t
             .seasons

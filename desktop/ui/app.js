@@ -53,7 +53,7 @@
   const toast = text => { const t = byId('toast'); t.textContent = text; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 2600); };
 
   const Settings = {
-    data: Object.assign({ maxHeight: 1080, downloadHeight: 1080, subtitleLang: 'en', audioLang: '', subSize: 1, skipSeconds: 10, autoplay: true, hwdec: true, volume: 100, mute: false, speed: 1, subBackground: true, dub: false, heroRotate: true, autoSkip: false }, JSON.parse(localStorage.getItem('settings') || '{}')),
+    data: Object.assign({ maxHeight: 1080, downloadHeight: 1080, subtitleLang: 'en', audioLang: '', subSize: 1, skipSeconds: 10, autoplay: true, hwdec: true, volume: 100, mute: false, speed: 1, subBg: 'shadow', subColor: 'white', subPx: 24, subLift: 0, uiScale: 'm', dub: false, heroRotate: true, autoSkip: false }, JSON.parse(localStorage.getItem('settings') || '{}')),
     save() { localStorage.setItem('settings', JSON.stringify(this.data)); },
     set(k, v) { this.data[k] = v; this.save(); },
     push() { return api.post('settings', { max_height: this.data.maxHeight, subtitle_lang: this.data.subtitleLang, audio_lang: this.data.audioLang || '' }).catch(() => {}); },
@@ -624,7 +624,7 @@
       m.style.bottom = `${host.bottom - r.top + 10}px`;
     }
   }
-  function closeMenus() { ctx.hidden = true; byId('pl-menu').hidden = true; byId('player').classList.remove('menu-open'); }
+  function closeMenus() { ctx.hidden = true; }
   document.addEventListener('mousedown', e => { if (!e.target.closest('.pmenu') && !e.target.closest('[data-menu]')) closeMenus(); });
 
   function modal(title) {
@@ -660,8 +660,8 @@
         ${row('Default audio (anime)', 'When a show offers both.', seg('dub', [false, true], v => v ? 'Dub' : 'Sub'))}
         ${row('Subtitle language', 'Picked automatically when a source has it.', sel('subtitleLang', langs))}
         ${row('Audio language', 'For sources with several audio tracks.', sel('audioLang', [['', 'Match subtitles']].concat(langs)))}
-        ${row('Subtitle size', '', seg('subSize', [0.8, 1, 1.2, 1.5], v => v === 1 ? 'Normal' : v < 1 ? 'Small' : v < 1.4 ? 'Large' : 'Huge'))}
-        ${row('Subtitle backdrop', 'Soft box behind the text.', sw('subBackground'), 'subBackground')}
+        ${row('Caption background', '', seg('subBg', ['shadow', 'box', 'none'], v => v[0].toUpperCase() + v.slice(1)))}
+        ${row('Caption colour', '', seg('subColor', ['white', 'yellow', 'red', 'cyan'], v => v[0].toUpperCase() + v.slice(1)))}
       </div>
       <div class="vs-section"><div class="vs-label">Home &amp; downloads</div>
         ${row('Rotate the hero', 'Cycles the featured titles every few seconds.', sw('heroRotate'), 'heroRotate')}
@@ -690,7 +690,7 @@
   function afterSetting(key) {
     if (key === 'maxHeight' || key === 'subtitleLang' || key === 'audioLang') Settings.push();
     if (key === 'hwdec') Player.set('hwdec', S.hwdec ? 'auto-safe' : 'no');
-    if (key === 'subSize' || key === 'subBackground') Player.applySubStyle();
+    if (key === 'subBg' || key === 'subColor') Player.applySubStyle();
     if (key === 'skipSeconds') Player.refreshSkip();
     if (key === 'heroRotate') renderHero();
   }
@@ -728,14 +728,30 @@
   }
 
   const Player = (() => {
-    const root = byId('player');
-    const ui = {};
-    ['name', 'source', 'ep', 'epname', 'logo', 'showtitle', 'meta', 'eptitle', 'desc', 'flash', 'spinner', 'status', 'skip', 'next', 'scrub', 'play', 'rew', 'ffw', 'mute', 'vol', 'pos', 'dur', 'episodes', 'nextbtn', 'cc', 'audio', 'quality', 'speed', 'gear', 'mini', 'full', 'stats', 'menu', 'panel', 'back', 'controls'].forEach(k => { ui[k] = byId(`pl-${k}`); });
-    ui.fill = $('.play', ui.scrub); ui.buf = $('.buffer', ui.scrub); ui.thumb = $('.thumb', ui.scrub); ui.hover = $('.hover-time', ui.scrub); ui.markers = $('.markers', ui.scrub);
-    const st = { open: false, ready: false, initError: null, item: null, streams: [], streamIndex: -1, stream: null, loading: false, pos: 0, dur: 0, paused: true, subs: [], sid: null, audioTracks: null, lastSave: 0, lastSavedPos: -1, dismissedNext: false, skipped: new Set(), hideTimer: null, flashTimer: null, fullscreen: false, mini: false, scrubbing: false, props: {}, sleepAt: null, sleepAtEnd: false, statsOn: false, finishedAt: 0 };
+    const root = byId('player-root');
+    const q = id => byId(id);
+    const ui = {
+      back: q('pl-back'), tbTitle: q('tb-title'), tbEp: q('tb-ep'), tbEpname: q('tb-epname'), infoBtn: q('title-info-btn'), listBtn: q('mylist-btn'),
+      logo: q('show-logo'), showTitle: q('show-title-text'), pauseMeta: q('pause-meta'), pauseEp: q('pause-ep-title'), pauseDesc: q('pause-desc'),
+      playpause: q('playpause'), iconPlay: q('icon-play'), iconPause: q('icon-pause'), rew: q('rew10'), ffw: q('fwd10'), mute: q('mute'), volume: q('volume'), time: q('time'),
+      progress: q('progress-wrap'), play: q('progress-play'), buffer: q('progress-buffer'), thumb: q('progress-thumb'), seek: q('seek'), markers: q('seg-markers'),
+      episodesToggle: q('episodes-toggle'), nextEpisode: q('next-episode'), pip: q('pip-btn'), fullscreen: q('fullscreen'),
+      seekLeft: q('seek-left'), seekRight: q('seek-right'), burst: q('play-burst'), ring: q('buffer-ring'), mRew: q('m-rew'), mPlay: q('m-play'), mFwd: q('m-fwd'),
+      skip: q('skip-intro'), nextOv: q('next-ep-overlay'), nextShow: q('next-ep-show'), nextTitle: q('next-ep-title'), nextBar: q('next-ep-bar'), nextCount: q('next-ep-countdown'), nextNow: q('next-ep-now'), nextCancel: q('next-ep-cancel'),
+      endActions: q('end-actions'), endReplay: q('end-replay'), endNext: q('end-next'),
+      scanning: q('scanning-overlay'), finderPoster: q('finder-poster'), finderKicker: q('finder-kicker'), finderTitle: q('finder-title'), finderEp: q('finder-ep'), scanMsg: q('scanning-msg'), finderSub: q('finder-sub'), finderFill: q('finder-bar-fill'), finderCount: q('finder-count'), finderSources: q('finder-sources'),
+      toast: q('source-toast'), notifs: q('notif-stack'),
+      settingsWrap: q('settings-panel-wrap'), settingsTitle: q('settings-title'), settingsBack: q('settings-back'),
+      drawer: q('drawer'), lead: q('sheet-lead'), search: q('search-input'), seasonWrap: q('season-pill-wrap'), seasonBtn: q('season-pill-btn'), seasonLabel: q('season-pill-label'), seasonDrop: q('season-dropdown'), autonext: q('autonext-btn'), drawerClose: q('drawer-close'), bannerTitle: q('season-banner-title'), bannerDesc: q('season-banner-desc'), stack: q('episodes-stack'), drawerSheetClose: q('drawer-sheet-close'),
+    };
+    const st = { open: false, ready: false, initError: null, item: null, details: null, streams: [], streamIndex: -1, stream: null, candidates: [], loading: false, pos: 0, dur: 0, paused: true, subs: [], sid: null, audioTracks: null, lastSave: 0, lastSavedPos: -1, dismissedNext: false, skipped: new Set(), hideTimer: null, fullscreen: false, mini: false, scrubbing: false, props: {}, sleepAt: null, sleepAtEnd: false, statsOn: false, finishedAt: 0, ended: false, tab: null, drawerSeason: null, volumeBeforeMute: 100 };
     const cmd = (...args) => invoke('player_cmd', { args: args.map(String) }).catch(e => log('mpv', `${args.join(' ')} → ${e}`));
     const set = (name, value) => invoke('player_set', { name, value: String(value) }).catch(e => log('mpv', `set ${name} → ${e}`));
     const get = name => invoke('player_get', { name }).catch(() => null);
+    const pad = n => String(n).padStart(2, '0');
+    const tclock = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return h ? `${h}:${pad(m)}:${pad(x)}` : `${pad(m)}:${pad(x)}`; };
+    const SOURCE_FULL = { vixsrc: 'VixSrc', cno: 'Cino', mapple: 'Mapple', vidbolt: 'VidBolt', vidrock: 'VidRock', animekai: 'AnimeKai', animeparadise: 'AnimeParadise', luffy: 'LuffyTV', kototv: 'KotoTV', offline: 'Downloaded' };
+    const fullName = s => SOURCE_FULL[s] || sourceLabel(s);
 
     async function init() {
       try {
@@ -749,70 +765,112 @@
     }
     function applySubStyle() {
       if (!st.ready) return;
-      set('sub-font-size', Math.round(48 * (S.subSize || 1)));
-      set('sub-back-color', S.subBackground ? '#66000000' : '#00000000');
-      set('sub-border-size', S.subBackground ? 1.5 : 2.6);
+      set('sub-font-size', Math.round((S.subPx || 24) * 2));
+      const bg = S.subBg || (S.subBackground === false ? 'shadow' : 'shadow');
+      set('sub-back-color', bg === 'box' ? '#99000000' : '#00000000');
+      set('sub-border-size', bg === 'none' ? 0 : bg === 'box' ? 1.2 : 2.6);
+      set('sub-shadow-offset', bg === 'shadow' ? 2 : 0);
+      set('sub-color', { white: '#FFFFFF', yellow: '#FDE047', red: '#F87171', cyan: '#67E8F9' }[S.subColor || 'white']);
+      set('sub-margin-y', Math.round(60 + (S.subLift || 0) * 2));
     }
-    function refreshSkip() { $$('.skipnum', root).forEach(b => b.textContent = S.skipSeconds); }
+    function refreshSkip() { const n = S.skipSeconds; ui.rew.title = `-${n}s`; ui.ffw.title = `+${n}s`; }
+    function applyScale() { ['s', 'm', 'l', 'xl'].forEach(k => root.classList.toggle(`ui-scale-${k}`, (S.uiScale || 'm') === k)); }
+
+    function notify(text, ms) {
+      const n = el(`<div class="notif-item">${esc(text)}</div>`);
+      ui.notifs.appendChild(n);
+      requestAnimationFrame(() => n.classList.add('notif-show'));
+      setTimeout(() => { n.classList.remove('notif-show'); setTimeout(() => n.remove(), 400); }, ms || 2600);
+    }
+    let toastTimer2;
+    function sourceToast(text) { ui.toast.textContent = text; ui.toast.classList.add('show'); clearTimeout(toastTimer2); toastTimer2 = setTimeout(() => ui.toast.classList.remove('show'), 2400); }
+
+    function candidatesFor(item) {
+      if (item.offline) return ['offline'];
+      const e = Item.ep(item);
+      if (Item.isAnime(item)) return (e && e.sources || []).map(s => s.provider).filter((v, i, a) => a.indexOf(v) === i);
+      return Item.isMovie(item) ? ['vixsrc', 'cno', 'mapple', 'vidrock'] : ['vixsrc', 'cno', 'mapple', 'vidbolt', 'vidrock'];
+    }
+    function finder(item, state) {
+      const e = Item.ep(item), anime = Item.isAnime(item);
+      ui.finderPoster.src = item.title.poster || '';
+      ui.finderKicker.textContent = [e ? (anime ? `E${numText(e.number)}` : `S${e.season} E${Math.trunc(e.number)}`) : kindLabel(item.title.kind), item.title.year].filter(Boolean).join(' · ');
+      ui.finderTitle.textContent = item.title.name;
+      ui.finderEp.textContent = e ? (e.name || '') : '';
+      const names = st.candidates;
+      ui.finderCount.textContent = names.length;
+      ui.finderSources.innerHTML = names.map(n => { const s = state[n] || 'waiting'; return `<div class="fsrc ${s}" data-src="${esc(n)}"><span class="dot"></span><span><div class="n">${esc(fullName(n))}</div><div class="s">${s === 'checking' ? 'Checking' : s === 'found' ? 'Ready' : s === 'playing' ? 'Playing' : s === 'failed' ? 'No stream' : 'Waiting'}</div></span></div>`; }).join('');
+      const done = names.filter(n => state[n] && state[n] !== 'checking' && state[n] !== 'waiting').length;
+      ui.finderSub.textContent = names.length ? `${done} of ${names.length} checked` : '';
+      ui.finderFill.style.width = `${names.length ? Math.round(done / names.length * 100) : 0}%`;
+    }
+    function scanning(on, msg) {
+      root.classList.toggle('scanning', on);
+      ui.scanning.classList.toggle('hidden', !on);
+      if (msg) ui.scanMsg.textContent = msg;
+    }
 
     async function start(item) {
       if (!st.ready) { toast(st.initError ? `Player unavailable: ${st.initError}` : 'Player is still starting'); return; }
       closeMenus();
-      Object.assign(st, { item, streams: [], stream: null, streamIndex: -1, pos: item.startAt || 0, dur: 0, dismissedNext: false, skipped: new Set(), subs: [], sid: null, audioTracks: null, lastSavedPos: -1, finishedAt: 0, loading: true });
-      ui.panel.hidden = true; ui.next.hidden = true; ui.skip.hidden = true; ui.markers.innerHTML = '';
-      root.classList.add('loading');
+      if (infoOv.classList.contains('open')) closeInfo();
+      Object.assign(st, { item, streams: [], stream: null, streamIndex: -1, pos: item.startAt || 0, dur: 0, dismissedNext: false, skipped: new Set(), subs: [], sid: null, audioTracks: null, lastSavedPos: -1, finishedAt: 0, loading: true, ended: false, details: App.details[tkey(item.title)] || null });
+      st.candidates = candidatesFor(item);
+      ui.nextOv.classList.add('hidden'); ui.skip.classList.add('hidden'); ui.endActions.classList.add('hidden'); ui.markers.innerHTML = '';
+      closeDrawer(); closeSettings();
+      root.classList.toggle('is-movie', Item.isMovie(item));
+      root.classList.toggle('is-anime', Item.isAnime(item));
+      root.classList.toggle('multi-season', Item.isAnime(item) ? (item.chain || []).length > 1 : new Set(item.episodes.map(e => e.season)).size > 1);
       if (!st.open) {
         st.open = true;
         root.hidden = false;
+        applyScale();
         document.documentElement.classList.add('video');
         invoke('player_show', { visible: true });
         window.addEventListener('keydown', onKey, true);
       }
       renderTitle();
-      ui.source.textContent = '';
-      status('Finding a source…');
-      ui.spinner.hidden = false;
+      const e = Item.ep(item);
+      const state = {}; st.candidates.forEach(n => { state[n] = 'checking'; });
+      finder(item, state);
+      scanning(true, e ? `Loading episode ${numText(e.number)}…` : 'Finding a source…');
       showControls();
       updateTime();
-      ui.fill.style.width = ui.buf.style.width = '0%';
       await cmd('stop');
       let reply;
       try { reply = item.offline ? await api.get('offline', { key: item.offline }) : await api.post('play', Item.request(item)); }
-      catch (e) { status(`Couldn't resolve this one. ${e}`, true); return; }
+      catch (err) { st.candidates.forEach(n => { state[n] = 'failed'; }); finder(item, state); scanning(true, `Couldn't resolve this one. ${err}`); st.loading = false; return; }
       if (st.item !== item) return;
       let streams = reply.streams || [];
       const pref = Memory.preferredSource(item.title);
       if (pref) streams = streams.slice().sort((a, b) => (a.source === pref ? 0 : 1) - (b.source === pref ? 0 : 1));
       st.streams = streams;
-      if (!streams.length) { status('No source has this one right now.', true); return; }
+      st.candidates.forEach(n => { state[n] = streams.some(s => s.source === n) ? 'found' : 'failed'; });
+      streams.forEach(s => { if (!st.candidates.includes(s.source)) { st.candidates.push(s.source); state[s.source] = 'found'; } });
+      st.finderState = state;
+      finder(item, state);
+      if (!streams.length) { scanning(true, 'No source has this one right now.'); st.loading = false; return; }
       loadStream(0);
-    }
-    function status(text, final) {
-      ui.status.hidden = !text;
-      ui.status.innerHTML = text ? `<div>${esc(text)}</div>` : '';
-      if (final) { ui.spinner.hidden = true; st.loading = false; root.classList.remove('loading'); showControls(); }
     }
     async function loadStream(i, resumeAt) {
       const s = st.streams[i];
-      if (!s) { status('Every source failed for this one. Try again in a bit.', true); return; }
-      Object.assign(st, { streamIndex: i, stream: s, loading: true, subs: s.subs || [], sid: null });
-      root.classList.add('loading');
+      if (!s) { scanning(true, 'Every source failed for this one.'); st.loading = false; return; }
+      Object.assign(st, { streamIndex: i, stream: s, loading: true, subs: s.subs || [], sid: null, ended: false });
+      ui.endActions.classList.add('hidden');
       const at = resumeAt != null ? resumeAt : (st.item.startAt || null);
-      ui.source.textContent = sourceLabel(s.source);
-      ui.spinner.hidden = false;
-      status(i > 0 ? `Trying ${sourceLabel(s.source)}…` : 'Loading…');
+      if (st.finderState) { Object.keys(st.finderState).forEach(k => { if (st.finderState[k] === 'playing') st.finderState[k] = 'found'; }); st.finderState[s.source] = 'playing'; finder(st.item, st.finderState); }
+      scanning(true, i > 0 ? `Trying ${fullName(s.source)}…` : 'Loading…');
       ui.markers.innerHTML = '';
       await set('start', at && at > 0 ? String(at) : 'none');
       await set('pause', 'no');
       await cmd('loadfile', s.url, 'replace');
+      renderSettingsPane();
       log('play', `${Item.heading(st.item)} via ${s.source}${at ? ` @${Math.round(at)}` : ''}`);
     }
     async function onLoaded() {
       st.loading = false;
-      root.classList.remove('loading');
-      ui.spinner.hidden = true;
-      status('');
-      if (st.stream && st.stream.source !== 'offline') Memory.rememberSource(st.item.title, st.stream.source);
+      scanning(false);
+      if (st.stream && st.stream.source !== 'offline') { Memory.rememberSource(st.item.title, st.stream.source); sourceToast(`Playing from ${fullName(st.stream.source)}`); }
       await set('start', 'none');
       const want = Memory.subtitle(st.item.title) || S.subtitleLang;
       let pick = -1;
@@ -822,13 +880,14 @@
         if (pick < 0 && want !== 'off' && langMatch(sub.lang, want)) pick = i;
       }
       await selectSub(pick >= 0 ? pick : null, true);
-      if (st.stream && st.stream.hls && st.stream.source !== 'offline') api.get('audio', { url: st.stream.url }).then(rows => { st.audioTracks = rows || []; }).catch(() => { st.audioTracks = []; });
+      if (st.stream && st.stream.hls && st.stream.source !== 'offline') api.get('audio', { url: st.stream.url }).then(rows => { st.audioTracks = rows || []; renderSettingsPane(); }).catch(() => { st.audioTracks = []; });
       drawMarkers();
+      renderSettingsPane();
       scheduleHide();
     }
     function drawMarkers() {
       if (!st.dur || !st.stream) { ui.markers.innerHTML = ''; return; }
-      ui.markers.innerHTML = ['intro', 'outro'].map(k => { const m = st.stream[k]; return m && m.length === 2 ? `<i style="left:${m[0] / st.dur * 100}%;width:${(m[1] - m[0]) / st.dur * 100}%"></i>` : ''; }).join('');
+      ui.markers.innerHTML = ['intro', 'outro'].map(k => { const m = st.stream[k]; return m && m.length === 2 ? `<div class="seg-mark ${k === 'intro' ? 'seg-intro' : 'seg-credits'}" style="left:${m[0] / st.dur * 100}%;width:${(m[1] - m[0]) / st.dur * 100}%"></div>` : ''; }).join('');
     }
     async function selectSub(index, silent) {
       st.sid = index;
@@ -840,34 +899,37 @@
         await set('sid', external[index] ? external[index].id : index + 1);
         await set('sub-visibility', 'yes');
       }
-      ui.cc.classList.toggle('on', index != null);
-      if (!silent) { Memory.rememberSubtitle(st.item.title, index == null ? null : st.subs[index].lang); flash(index == null ? 'Subtitles off' : langName(st.subs[index].lang), true); }
+      if (!silent) { Memory.rememberSubtitle(st.item.title, index == null ? null : st.subs[index].lang); notify(index == null ? 'Subtitles off' : `Subtitles: ${langName(st.subs[index].lang)}`); }
+      renderSettingsPane();
     }
     function renderTitle() {
       const it = st.item, e = Item.ep(it), anime = Item.isAnime(it);
-      ui.name.textContent = it.title.name;
-      ui.ep.textContent = e ? epTag(e, anime) + (it.dub ? ' · Dub' : '') : '';
-      ui.epname.textContent = e ? (e.name || '') : (it.title.year || '');
-      ui.nextbtn.hidden = !Item.next(it);
-      ui.episodes.hidden = Item.isMovie(it) || !it.episodes.length;
-      ui.showtitle.textContent = it.title.name;
-      ui.logo.hidden = true;
-      ui.eptitle.textContent = e ? epLabel(e, anime) : '';
-      ui.desc.textContent = e ? (e.overview || '') : (it.title.overview || '');
-      ui.meta.textContent = [it.title.year, kindLabel(it.title.kind), e && e.runtime ? human(e.runtime) : ''].filter(Boolean).join(' · ');
+      ui.tbTitle.textContent = it.title.name;
+      ui.tbEp.textContent = e ? (anime ? `E${numText(e.number)}` : `S${e.season} E${Math.trunc(e.number)}`) + (it.dub ? ' · Dub' : '') : '';
+      ui.tbEpname.textContent = e ? (e.name || '') : '';
+      ui.listBtn.classList.toggle('on', inList(it.title));
+      ui.showTitle.textContent = it.title.name;
+      ui.showTitle.style.display = 'block';
+      ui.logo.style.display = 'none';
+      ui.pauseEp.textContent = e ? (e.name || `Episode ${numText(e.number)}`) : '';
+      ui.pauseDesc.textContent = e ? (e.overview || '') : (it.title.overview || '');
+      ui.pauseMeta.textContent = e ? [`Episode ${numText(e.number)}`, e.runtime ? human(e.runtime) : ''].filter(Boolean).join(' · ') : [it.title.year, kindLabel(it.title.kind)].filter(Boolean).join(' · ');
+      ui.lead.textContent = it.title.name;
+      ui.bannerTitle.textContent = it.title.name;
       detailsFor(it.title).then(d => {
         if (!d || st.item !== it) return;
-        if (d.logo) { ui.logo.src = d.logo; ui.logo.hidden = false; ui.showtitle.textContent = ''; }
-        ui.meta.textContent = [d.year, kindLabel(d.kind), e && e.runtime ? human(e.runtime) : d.runtime ? human(d.runtime) : '', (d.genres || []).slice(0, 2).join(' · ')].filter(Boolean).join(' · ');
-        if (!e && !ui.desc.textContent) ui.desc.textContent = d.overview || '';
+        st.details = d;
+        if (d.logo) { ui.logo.src = d.logo; ui.logo.style.display = 'block'; ui.showTitle.style.display = 'none'; }
+        if (e) ui.pauseMeta.textContent = [`Episode ${numText(e.number)}`, (e.runtime || d.runtime) ? human(e.runtime || d.runtime) : ''].filter(Boolean).join(' · ');
+        else { ui.pauseMeta.textContent = [d.year, d.runtime ? human(d.runtime) : '', (d.genres || []).slice(0, 2).join(' · ')].filter(Boolean).join(' · '); if (!ui.pauseDesc.textContent) ui.pauseDesc.textContent = d.overview || ''; }
+        ui.bannerDesc.textContent = d.overview || '';
       });
     }
     function updateTime() {
-      ui.pos.textContent = clock(st.pos);
-      ui.dur.textContent = clock(st.dur);
-      if (!st.scrubbing) { const f = st.dur ? st.pos / st.dur : 0; ui.fill.style.width = `${f * 100}%`; ui.thumb.style.left = `${f * 100}%`; }
+      ui.time.textContent = `${tclock(st.pos)} / ${tclock(st.dur)}`;
+      if (!st.scrubbing) { const f = st.dur ? st.pos / st.dur : 0; ui.play.style.width = `${f * 100}%`; ui.thumb.style.left = `${f * 100}%`; ui.seek.value = f * 100; }
       const cache = st.props['demuxer-cache-duration'] || 0;
-      ui.buf.style.width = st.dur ? `${clamp((st.pos + cache) / st.dur, 0, 1) * 100}%` : '0%';
+      ui.buffer.style.width = st.dur ? `${clamp((st.pos + cache) / st.dur, 0, 1) * 100}%` : '0%';
     }
     function tick() {
       if (!st.open || !st.item) return;
@@ -885,48 +947,52 @@
     }
     function checkMarkers() {
       const s = st.stream;
-      if (!s) { ui.skip.hidden = true; return; }
+      if (!s) { ui.skip.classList.add('hidden'); return; }
       let which = null;
       for (const k of ['intro', 'outro']) { const m = s[k]; if (m && m.length === 2 && !st.skipped.has(k) && st.pos >= m[0] && st.pos < m[1] - 1) { which = k; break; } }
-      if (!which) { ui.skip.hidden = true; return; }
-      if (S.autoSkip && which === 'intro') { st.skipped.add(which); seek(s[which][1], true); flash('Skipped intro', true); return; }
-      if (ui.skip.hidden || ui.skip.dataset.which !== which) {
+      if (!which) { ui.skip.classList.add('hidden'); return; }
+      if (S.autoSkip && which === 'intro') { st.skipped.add(which); seek(s[which][1], true); notify('Skipped intro'); return; }
+      if (ui.skip.classList.contains('hidden') || ui.skip.dataset.which !== which) {
         ui.skip.dataset.which = which;
-        ui.skip.innerHTML = `${which === 'intro' ? 'Skip Intro' : 'Skip Outro'}${I.next}`;
-        ui.skip.hidden = false;
-        ui.skip.onclick = () => { st.skipped.add(which); seek(s[which][1], true); ui.skip.hidden = true; };
+        ui.skip.textContent = which === 'intro' ? 'Skip Intro ▶' : 'Skip Outro ▶';
+        ui.skip.classList.remove('hidden');
+        ui.skip.onclick = () => { st.skipped.add(which); seek(s[which][1], true); ui.skip.classList.add('hidden'); };
       }
     }
     function checkNext() {
       const next = st.item && Item.next(st.item);
-      const show = next && S.autoplay && !st.dismissedNext && st.dur > 0 && !st.loading && st.dur - st.pos <= 20 && st.dur - st.pos > 0;
-      if (!show) { ui.next.hidden = true; return; }
-      const left = Math.ceil(st.dur - st.pos), e = Item.ep(next);
-      if (ui.next.hidden) {
-        ui.next.innerHTML = `<div class="th">${(e.still || next.title.poster) ? `<img src="${esc(e.still || next.title.poster)}" alt="">` : ''}<div class="count"></div></div><div><div class="k">Up next</div><div class="n">${esc(epLabel(e, Item.isAnime(next)))}</div><div class="btns"><button class="pl" id="nx-play">Play now</button><button id="nx-x">Cancel</button></div></div>`;
-        ui.next.hidden = false;
-        byId('nx-play').onclick = ev => { ev.stopPropagation(); goNext(); };
-        byId('nx-x').onclick = ev => { ev.stopPropagation(); st.dismissedNext = true; ui.next.hidden = true; };
-        ui.next.onclick = () => goNext();
+      const left = st.dur - st.pos;
+      const show = next && S.autoplay && !st.dismissedNext && st.dur > 0 && !st.loading && left <= 20 && left > 0;
+      if (!show) { ui.nextOv.classList.add('hidden'); return; }
+      const e = Item.ep(next);
+      if (ui.nextOv.classList.contains('hidden')) {
+        ui.nextShow.textContent = next.title.name;
+        ui.nextTitle.textContent = epLabel(e, Item.isAnime(next));
+        ui.nextOv.classList.remove('hidden');
       }
-      $('.count', ui.next).textContent = left;
+      ui.nextCount.textContent = Math.ceil(left);
+      ui.nextBar.style.width = `${clamp((20 - left) / 20, 0, 1) * 100}%`;
     }
     function goNext() {
       const next = st.item && Item.next(st.item);
       if (!next) return;
       save(true);
       api.post('progress', Item.progress(next, 0, st.dur || 0)).catch(() => {});
-      ui.next.hidden = true;
+      ui.nextOv.classList.add('hidden');
       start(next);
     }
     function finished() {
-      if (st.finishedAt && Date.now() - st.finishedAt < 2000) return;
-      st.finishedAt = Date.now();
+      if (st.ended) return;
+      st.ended = true;
       save(true);
       const next = Item.next(st.item);
       if (next && !st.item.offline) api.post('progress', Item.progress(next, 0, st.dur || 0)).catch(() => {});
       if (st.sleepAtEnd) { close(); return; }
-      if (next && S.autoplay && !st.dismissedNext && !st.item.offline) start(next); else close();
+      if (next && S.autoplay && !st.dismissedNext && !st.item.offline) { start(next); return; }
+      ui.nextOv.classList.add('hidden');
+      ui.endActions.classList.remove('hidden');
+      ui.endNext.style.display = next ? '' : 'none';
+      showControls();
     }
     async function close() {
       if (!st.open) return;
@@ -936,57 +1002,70 @@
       window.removeEventListener('keydown', onKey, true);
       await cmd('stop');
       invoke('player_show', { visible: false });
-      if (st.fullscreen) { st.fullscreen = false; invoke('win', { action: 'fullscreen', on: false }); ui.full.innerHTML = I.full; }
+      if (st.fullscreen) { st.fullscreen = false; invoke('win', { action: 'fullscreen', on: false }); }
       if (st.mini) toggleMini(false);
       root.hidden = true;
-      root.classList.remove('loading', 'paused', 'menu-open');
-      ['status', 'spinner', 'next', 'skip', 'panel', 'stats'].forEach(k => { ui[k].hidden = true; });
+      root.classList.remove('scanning', 'buffering', 'paused', 'show-controls', 'drawer-open', 'settings-open');
+      ui.scanning.classList.add('hidden'); ui.nextOv.classList.add('hidden'); ui.skip.classList.add('hidden'); ui.endActions.classList.add('hidden');
+      closeDrawer(); closeSettings();
       document.documentElement.classList.remove('video');
       closeMenus();
       App.homeAt = 0; App.historyAt = 0;
-      if (info) { info.row = rowFor(info.title.kind, info.title.id); info.watched = Memory.watched(info.key); renderInfo(); }
       if (App.page === 'history') renderHistory();
       else if (!App.page && App.mode === 'home') { App.home = null; showMode('home'); }
     }
-    function flash(content, text) {
-      ui.flash.classList.toggle('text', !!text);
-      ui.flash.innerHTML = text ? esc(content) : content;
-      ui.flash.classList.add('show');
-      clearTimeout(st.flashTimer);
-      st.flashTimer = setTimeout(() => ui.flash.classList.remove('show'), text ? 900 : 500);
+    function burst(pausing) {
+      ui.burst.classList.remove('go', 'p', 'q');
+      void ui.burst.offsetWidth;
+      ui.burst.classList.add(pausing ? 'q' : 'p', 'go');
+    }
+    function seekFlash(right, n) {
+      const f = right ? ui.seekRight : ui.seekLeft;
+      f.querySelector('span').textContent = `${n}s`;
+      f.classList.remove('go'); void f.offsetWidth; f.classList.add('go');
     }
     function togglePlay() {
       if (!st.item || st.loading) return;
+      if (st.ended) { seek(0, true); set('pause', 'no'); st.ended = false; ui.endActions.classList.add('hidden'); return; }
       const toPause = !st.paused;
       set('pause', toPause ? 'yes' : 'no');
-      flash(toPause ? I.pause : I.play);
+      burst(toPause);
     }
     function seek(to, absolute) {
       if (!st.dur) return;
       const target = clamp(absolute ? to : st.pos + to, 0, Math.max(st.dur - 0.5, 0));
       st.pos = target; updateTime();
       cmd('seek', target, 'absolute+exact');
-      if (!absolute) flash(`${to > 0 ? '+' : '−'}${Math.abs(to)}s`, true);
+      if (!absolute) seekFlash(to > 0, Math.abs(to));
+      if (st.ended && target < st.dur - 1) { st.ended = false; ui.endActions.classList.add('hidden'); set('pause', 'no'); }
       showControls();
+    }
+    function paintVolume() {
+      const v = S.mute ? 0 : Math.min(S.volume, 100) / 100;
+      ui.volume.value = v;
+      ui.volume.style.background = `linear-gradient(to right, var(--accent-hi,#f87171) ${v * 100}%, rgba(255,255,255,0.25) ${v * 100}%)`;
+      ui.mute.innerHTML = S.mute || S.volume === 0 ? I.volx : I.vol;
     }
     function setVolume(v, quiet) {
       v = clamp(Math.round(v), 0, 150);
       Settings.set('volume', v); set('volume', v);
-      ui.vol.value = Math.min(v, 100);
       if (S.mute && v > 0) { Settings.set('mute', false); set('mute', 'no'); }
-      ui.mute.innerHTML = S.mute || v === 0 ? I.volx : I.vol;
-      if (!quiet) flash(`Volume ${v}%`, true);
+      paintVolume();
+      if (!quiet) notify(`Volume ${v}%`, 1200);
     }
-    function toggleMute() { Settings.set('mute', !S.mute); set('mute', S.mute ? 'yes' : 'no'); ui.mute.innerHTML = S.mute ? I.volx : I.vol; flash(S.mute ? 'Muted' : `Volume ${S.volume}%`, true); }
-    function setSpeed(v) { v = clamp(Math.round(v * 100) / 100, 0.25, 4); Settings.set('speed', v); set('speed', v); $('.lbl', ui.speed).textContent = `${v}×`; flash(`${v}× speed`, true); }
-    function toggleFullscreen(on) { st.fullscreen = on == null ? !st.fullscreen : on; invoke('win', { action: 'fullscreen', on: st.fullscreen }); ui.full.innerHTML = st.fullscreen ? I.unfull : I.full; }
-    function toggleMini(on) { st.mini = on == null ? !st.mini : on; invoke('win', { action: 'mini', on: st.mini }); root.classList.toggle('mini', st.mini); ui.mini.classList.toggle('on', st.mini); }
+    function toggleMute() { Settings.set('mute', !S.mute); set('mute', S.mute ? 'yes' : 'no'); paintVolume(); notify(S.mute ? 'Muted' : `Volume ${S.volume}%`, 1200); }
+    function setSpeed(v) { v = clamp(Math.round(v * 100) / 100, 0.25, 4); Settings.set('speed', v); set('speed', v); notify(`${v}× speed`, 1200); renderSettingsPane(); }
+    function toggleFullscreen(on) { st.fullscreen = on == null ? !st.fullscreen : on; invoke('win', { action: 'fullscreen', on: st.fullscreen }); }
+    function toggleMini(on) { st.mini = on == null ? !st.mini : on; invoke('win', { action: 'mini', on: st.mini }); root.classList.toggle('mini', st.mini); }
     function showControls() { root.classList.add('show-controls'); clearTimeout(st.hideTimer); if (!st.paused && !st.loading) scheduleHide(); }
-    function scheduleHide() { clearTimeout(st.hideTimer); st.hideTimer = setTimeout(() => { if (!st.paused && !st.scrubbing && ui.menu.hidden && ui.panel.hidden) root.classList.remove('show-controls'); }, 3000); }
+    function scheduleHide() { clearTimeout(st.hideTimer); st.hideTimer = setTimeout(() => { if (!st.paused && !st.scrubbing && !root.classList.contains('drawer-open') && !root.classList.contains('settings-open')) root.classList.remove('show-controls'); }, 3000); }
+    let statsEl = null;
     function renderStats() {
       const p = st.props, w = p['video-params/w'], h = p['video-params/h'];
+      if (!statsEl) { statsEl = el('<div class="stats"></div>'); root.appendChild(statsEl); }
+      statsEl.hidden = !st.statsOn;
       const lines = [
-        ['Source', `${sourceLabel(st.stream && st.stream.source)}${st.stream && st.stream.hls ? ' · HLS' : ''}`],
+        ['Source', `${fullName(st.stream && st.stream.source)}${st.stream && st.stream.hls ? ' · HLS' : ''}`],
         ['Video', `${w && h ? `${w}×${h}` : '—'} ${p['video-codec'] ? `· ${String(p['video-codec']).split(' ')[0]}` : ''}`],
         ['Audio', p['audio-codec-name'] || '—'],
         ['Decoder', p['hwdec-current'] && p['hwdec-current'] !== 'no' ? `${p['hwdec-current']} (GPU)` : 'software'],
@@ -997,18 +1076,17 @@
         ['Speed', `${p.speed || 1}×`],
         ['Relay', `127.0.0.1:${App.boot.port}`],
       ];
-      ui.stats.textContent = lines.map(([k, v]) => `${k.padEnd(9)}${v}`).join('\n');
+      statsEl.textContent = lines.map(([k, v]) => `${k.padEnd(9)}${v}`).join('\n');
     }
     function onProp(name, value) {
       st.props[name] = value;
       switch (name) {
-        case 'pause': st.paused = !!value; ui.play.innerHTML = st.paused ? I.play : I.pause; root.classList.toggle('paused', st.paused); if (st.paused) showControls(); else scheduleHide(); break;
+        case 'pause': st.paused = !!value; ui.iconPlay.style.display = st.paused ? '' : 'none'; ui.iconPause.style.display = st.paused ? 'none' : ''; root.classList.toggle('paused', st.paused); if (st.paused) showControls(); else scheduleHide(); break;
         case 'time-pos': if (value != null && !st.scrubbing) { st.pos = value; updateTime(); } break;
         case 'duration': if (value != null) { st.dur = value; updateTime(); drawMarkers(); } break;
-        case 'paused-for-cache': ui.spinner.hidden = !(value || st.loading); break;
+        case 'paused-for-cache': root.classList.toggle('buffering', !!value && !st.loading); ui.ring.classList.toggle('hidden', !(value && !st.loading)); break;
         case 'eof-reached': if (value && st.dur > 0 && !st.loading) finished(); break;
-        case 'speed': if (value) $('.lbl', ui.speed).textContent = `${Math.round(value * 100) / 100}×`; break;
-        case 'volume': if (value != null && !st.scrubbing) ui.vol.value = Math.min(Math.round(value), 100); break;
+        case 'volume': if (value != null) { S.volume = Math.round(value); paintVolume(); } break;
         case 'demuxer-cache-duration': updateTime(); break;
       }
     }
@@ -1019,81 +1097,193 @@
           if (!st.open) break;
           if (p.reason === 'error') {
             log('play', `${st.stream ? st.stream.source : '?'} failed: ${p.error}`);
-            if (st.streams[st.streamIndex + 1]) { toast(`${sourceLabel(st.stream.source)} failed, trying ${sourceLabel(st.streams[st.streamIndex + 1].source)}`); loadStream(st.streamIndex + 1, st.pos > 5 ? st.pos : null); }
-            else status(`Couldn't play this one (${p.error}).`, true);
+            if (st.finderState && st.stream) { st.finderState[st.stream.source] = 'failed'; }
+            if (st.streams[st.streamIndex + 1]) { sourceToast(`${fullName(st.stream.source)} failed, trying ${fullName(st.streams[st.streamIndex + 1].source)}`); loadStream(st.streamIndex + 1, st.pos > 5 ? st.pos : null); }
+            else { finder(st.item, st.finderState || {}); scanning(true, `Couldn't play this one (${p.error}).`); st.loading = false; }
           } else if (p.reason === 'eof' && st.dur > 0 && !st.loading) finished();
           break;
         case 'log': if (p.level === 'error' || p.level === 'fatal') log('mpv', `${p.prefix}: ${p.text}`); break;
         case 'prop': onProp(p.name, p.value); break;
       }
     }
-    function episodesPanel() {
-      if (!ui.panel.hidden) { ui.panel.hidden = true; root.classList.remove('menu-open'); return; }
+
+    function openDrawer() {
+      if (!st.item || Item.isMovie(st.item) || !st.item.episodes.length) return;
+      closeSettings();
+      renderDrawer();
+      ui.drawer.classList.add('open'); ui.drawer.setAttribute('aria-hidden', 'false');
+      root.classList.add('drawer-open');
+      setTimeout(() => { const on = $('.ep-tile.active', ui.stack); if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' }); }, 50);
+    }
+    function closeDrawer() { ui.drawer.classList.remove('open'); ui.drawer.setAttribute('aria-hidden', 'true'); root.classList.remove('drawer-open'); ui.seasonDrop.classList.remove('open'); }
+    function toggleDrawer() { if (root.classList.contains('drawer-open')) closeDrawer(); else openDrawer(); }
+    function renderDrawer() {
+      const it = st.item, anime = Item.isAnime(it), cur = Item.ep(it);
+      const seasons = anime ? [] : Array.from(new Set(it.episodes.map(e => e.season)));
+      if (st.drawerSeason == null || (!anime && !seasons.includes(st.drawerSeason))) st.drawerSeason = cur ? cur.season : seasons[0];
+      ui.autonext.classList.toggle('on', !!S.autoplay);
+      if (anime) {
+        const chain = it.chain || [];
+        ui.seasonLabel.textContent = (chain.find(c => c.id === it.title.id) || {}).title || it.title.name;
+        ui.seasonDrop.innerHTML = chain.map((c, i) => `<div class="item${c.id === it.title.id ? ' active' : ''}" data-a="${c.id}">${esc(c.title || `Season ${c.season}`)}</div>`).join('');
+      } else {
+        ui.seasonLabel.textContent = st.drawerSeason === 0 ? 'Specials' : `S${st.drawerSeason}`;
+        ui.seasonDrop.innerHTML = seasons.map(s => `<div class="item${s === st.drawerSeason ? ' active' : ''}" data-s="${s}">${s === 0 ? 'Specials' : `Season ${s}`}</div>`).join('');
+      }
+      const needle = (ui.search.value || '').trim().toLowerCase();
+      const watched = Memory.watched(tkey(it.title));
+      ui.stack.innerHTML = it.episodes.map((e, i) => {
+        if (!anime && e.season !== st.drawerSeason) return '';
+        if (needle && !(String(e.number).includes(needle) || (e.name || '').toLowerCase().includes(needle))) return '';
+        const active = i === it.index;
+        const seen = watched.has(`${e.season}-${Math.trunc(e.number)}`);
+        return `<a class="ep-tile${active ? ' active playing' : ''}" data-i="${i}"><span class="th">${(e.still || it.title.poster) ? `<img loading="lazy" decoding="async" src="${esc(e.still || it.title.poster)}" alt="">` : ''}<span class="num">E${esc(numText(e.number))}</span><span class="now">NOW PLAYING</span><span class="tile-acts"><button type="button" class="save${inList(it.title) ? ' on' : ''}" data-act="save" aria-label="Save to My List"><svg viewBox="0 0 24 24"><path d="M6 4h12a1 1 0 0 1 1 1v15.4a.6.6 0 0 1-.92.5L12 17.5l-6.08 3.9A.6.6 0 0 1 5 20.9V5a1 1 0 0 1 1-1z"></path></svg></button><button type="button" class="seen${seen ? ' on' : ''}" data-act="seen" aria-label="Mark watched"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg></button></span></span><span class="body"><span class="tt">${esc(e.name || `Episode ${numText(e.number)}`)}</span><p class="desc">${esc(e.overview || '')}</p><span class="rm">${e.runtime ? esc(human(e.runtime)) : ''}</span></span></a>`;
+      }).join('') || '<div style="padding:20px;color:var(--fg-mid)">No episodes match.</div>';
+    }
+    ui.stack.addEventListener('click', e => {
+      const act = e.target.closest('[data-act]');
+      const tile = e.target.closest('.ep-tile');
+      if (!tile) return;
+      const i = Number(tile.dataset.i), ep = st.item.episodes[i];
+      if (act) {
+        e.preventDefault(); e.stopPropagation();
+        if (act.dataset.act === 'save') { toggleList(st.item.title).then(() => renderDrawer()); }
+        else { const key = tkey(st.item.title), k = `${ep.season}-${Math.trunc(ep.number)}`; const m = Memory.map('watched'); const s = new Set(m[key] || []); if (s.has(k)) s.delete(k); else s.add(k); m[key] = Array.from(s); Memory.store('watched', m); act.classList.toggle('on'); }
+        return;
+      }
+      if (i !== st.item.index) { closeDrawer(); start(Item.at(st.item, i)); } else closeDrawer();
+    });
+    ui.seasonBtn.onclick = e => { e.stopPropagation(); ui.seasonDrop.classList.toggle('open'); };
+    ui.seasonDrop.addEventListener('click', async e => {
+      const item = e.target.closest('.item'); if (!item) return;
+      ui.seasonDrop.classList.remove('open');
+      if (item.dataset.s != null) { st.drawerSeason = Number(item.dataset.s); renderDrawer(); return; }
+      const id = Number(item.dataset.a);
+      if (id === st.item.title.id) return;
+      try {
+        const [d, list] = await Promise.all([api.get('details', { kind: 'anime', id: String(id) }), api.get('title', { kind: 'anime', id: String(id), dub: st.item.dub ? '1' : '0' })]);
+        App.details[`anime-${id}`] = d;
+        const title = remember({ id: d.id, kind: 'anime', name: d.name, year: d.year, rating: d.rating, overview: d.overview, poster: d.poster, backdrop: d.backdrop, genres: d.genres, seasons: d.seasons });
+        if (!list.episodes.length) { notify('No episodes listed for that season'); return; }
+        closeDrawer();
+        start(Item.make(title, list.episodes, 0, list.dub, null, d.seasons || []));
+      } catch (err) { notify(String(err)); }
+    });
+    ui.search.addEventListener('input', () => renderDrawer());
+    ui.autonext.onclick = () => { Settings.set('autoplay', !S.autoplay); ui.autonext.classList.toggle('on', S.autoplay); };
+    ui.drawerClose.onclick = closeDrawer; ui.drawerSheetClose.onclick = closeDrawer;
+
+    const TABS = ['quality', 'subtitles', 'audio', 'servers', 'download', 'speed', 'display'];
+    const TAB_TITLES = { home: 'Settings', quality: 'Quality', subtitles: 'Subtitles', audio: 'Audio', servers: 'Servers', download: 'Download', speed: 'Speed', display: 'Display' };
+    function openSettings(tab) {
+      closeDrawer();
+      st.tab = tab || 'home';
+      ui.settingsWrap.classList.add('open');
+      root.classList.add('settings-open');
+      renderSettingsPane();
+    }
+    function closeSettings() { ui.settingsWrap.classList.remove('open'); root.classList.remove('settings-open'); st.tab = null; }
+    function toggleSettings(tab) { if (root.classList.contains('settings-open') && (st.tab === tab || !tab)) closeSettings(); else openSettings(tab); }
+    const card = (label, badge, active, attrs, soft) => `<div class="opt-card${active ? ' active' : ''}" ${attrs || ''}><span>${esc(label)}</span>${badge ? `<span class="${soft ? 'badge-soft' : 'badge'}">${esc(badge)}</span>` : ''}${active ? '<span class="check-dot"></span>' : ''}</div>`;
+    const leadCard = (title, sub, active, attrs) => `<div class="opt-card${active ? ' active' : ''}" ${attrs || ''}><span class="lead"><span class="lead-text"><strong>${esc(title)}</strong><small>${esc(sub)}</small></span></span>${active ? '<span class="check-dot"></span>' : ''}</div>`;
+    function renderSettingsPane() {
+      if (!root.classList.contains('settings-open')) return;
+      const tab = st.tab || 'home';
+      $$('.settings-tabs .tab', ui.settingsWrap).forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+      $$('.settings-pane', ui.settingsWrap).forEach(p => p.classList.toggle('active', p.dataset.pane === tab));
+      ui.settingsTitle.textContent = TAB_TITLES[tab] || 'Settings';
+      ui.settingsBack.style.visibility = tab === 'home' ? 'hidden' : 'visible';
+      const pane = byId(`pane-${tab}`);
+      if (!pane) return;
       const it = st.item;
-      if (!it || !it.episodes.length) return;
-      const anime = Item.isAnime(it), seasons = anime ? [] : Array.from(new Set(it.episodes.map(e => e.season)));
-      const cur = Item.ep(it);
-      let season = cur ? cur.season : seasons[0];
-      const render = () => {
-        ui.panel.innerHTML = `<button class="close" aria-label="Close">${I.x}</button><h3>Episodes</h3>${seasons.length > 1 ? `<div class="ip-season-pills">${seasons.map(s => `<button class="ip-pill${s === season ? ' on' : ''}" data-s="${s}">${s === 0 ? 'Specials' : `Season ${s}`}</button>`).join('')}</div>` : ''}<div class="ip-eps"></div>`;
-        const list = $('.ip-eps', ui.panel);
-        it.episodes.forEach((e, i) => {
-          if (!anime && e.season !== season) return;
-          const r = el(`<div class="ip-ep${i === it.index ? ' on' : ''}"><div class="th">${(e.still || it.title.poster) ? `<img loading="lazy" src="${esc(e.still || it.title.poster)}" alt="">` : ''}<span class="n">${esc(anime ? `E${numText(e.number)}` : `E${Math.trunc(e.number)}`)}</span></div><div class="tx"><div class="t">${esc(e.name || `Episode ${numText(e.number)}`)}</div><div class="r">${esc(epTag(e, anime))}</div></div></div>`);
-          r.onclick = () => { ui.panel.hidden = true; root.classList.remove('menu-open'); if (i !== it.index) start(Item.at(it, i)); };
-          list.appendChild(r);
-        });
-        $$('.ip-pill', ui.panel).forEach(c => c.onclick = () => { season = Number(c.dataset.s); render(); });
-        $('.close', ui.panel).onclick = () => { ui.panel.hidden = true; root.classList.remove('menu-open'); };
-        const on = $('.ip-ep.on', ui.panel); if (on) on.scrollIntoView({ block: 'center' });
-      };
-      render();
-      ui.panel.hidden = false;
-      root.classList.add('menu-open');
-      showControls();
+      if (tab === 'home') {
+        pane.innerHTML = [
+          leadCard('Quality', S.maxHeight === 2160 ? '4K' : `${S.maxHeight}p`, false, 'data-go="quality"'),
+          leadCard('Subtitles', st.sid == null ? 'Off' : (st.subs[st.sid] ? langName(st.subs[st.sid].lang) : 'On'), false, 'data-go="subtitles"'),
+          leadCard('Audio', it && Item.isAnime(it) ? (it.dub ? 'Dub' : 'Sub') : (S.audioLang ? langName(S.audioLang) : 'Default'), false, 'data-go="audio"'),
+          leadCard('Servers', st.stream ? fullName(st.stream.source) : '—', false, 'data-go="servers"'),
+          leadCard('Speed', `${S.speed || 1}×`, false, 'data-go="speed"'),
+          leadCard('Display', 'Captions, size, sleep timer', false, 'data-go="display"'),
+          it && !it.offline ? leadCard('Download', Item.isMovie(it) ? 'Save this movie offline' : 'Save this episode offline', false, 'data-go="download"') : '',
+        ].join('');
+      } else if (tab === 'quality') {
+        pane.innerHTML = [2160, 1080, 720, 480].map(h => card(h === 2160 ? '4K' : `${h}p`, h === 2160 ? 'UHD' : h === 1080 ? 'HD' : h === 720 ? 'HD' : 'SD', S.maxHeight === h, `data-h="${h}"`)).join('');
+      } else if (tab === 'subtitles') {
+        const internal = (st.props['track-list'] || []).filter(t => t.type === 'sub' && !t.external);
+        pane.innerHTML = card('Off', 'No Subtitles', st.sid == null, 'data-sub="off"', true) + st.subs.map((s, i) => card(langName(s.lang), 'Built-in', st.sid === i, `data-sub="${i}"`)).join('') + internal.map(t => card(t.title || langName(t.lang) || `Track ${t.id}`, 'Embedded', t.selected && st.sid === -1, `data-tid="${t.id}"`)).join('');
+      } else if (tab === 'audio') {
+        const internal = (st.props['track-list'] || []).filter(t => t.type === 'audio');
+        let html = '';
+        if (it && Item.isAnime(it)) html += card('Subbed (Japanese audio)', '', !it.dub, 'data-cat="sub"') + card('Dubbed (English audio)', '', it.dub, 'data-cat="dub"');
+        if (internal.length > 1) html += internal.map(t => card(t.title || langName(t.lang) || `Track ${t.id}`, t.lang || '', !!t.selected, `data-aid="${t.id}"`)).join('');
+        else if (st.audioTracks && st.audioTracks.length) html += st.audioTracks.map(t => card(t.name || langName(t.lang), t.lang || '', S.audioLang ? langMatch(t.lang, S.audioLang) : !!t.default, `data-alang="${esc(t.lang)}"`)).join('');
+        pane.innerHTML = html || card('Only one audio track', '', true);
+      } else if (tab === 'servers') {
+        pane.innerHTML = st.streams.map((s, i) => leadCard(fullName(s.source), [s.hls ? 'HLS' : 'MP4', s.subs && s.subs.length ? `${s.subs.length} subtitle${s.subs.length > 1 ? 's' : ''}` : '', i === st.streamIndex ? 'playing' : ''].filter(Boolean).join(' · '), i === st.streamIndex, `data-srv="${i}"`)).join('') || card('No other sources', '', true);
+      } else if (tab === 'download') {
+        pane.innerHTML = it ? leadCard(Item.isMovie(it) ? 'Download this movie' : 'Download this episode', `${S.downloadHeight === 2160 ? '4K' : `${S.downloadHeight}p`} · saved to this PC`, false, 'data-dl="1"') + [2160, 1080, 720, 480].map(h => card(h === 2160 ? '4K' : `${h}p`, 'download quality', S.downloadHeight === h, `data-dlh="${h}"`)).join('') : '';
+      } else if (tab === 'speed') {
+        pane.innerHTML = [0.5, 0.75, 1, 1.25, 1.5, 2].map(v => card(v === 1 ? '1x (Normal)' : `${v}x`, '', (S.speed || 1) === v, `data-speed="${v}"`)).join('');
+      } else if (tab === 'display') {
+        const segs = (key, opts, cur) => `<div style="display:flex;gap:4px;flex-wrap:wrap" data-seg="${key}">${opts.map(([v, l]) => `<button data-v="${v}" class="${cur === v ? 'active' : ''}" style="flex:1;min-width:44px;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:${cur === v ? 'rgba(220,38,38,0.18)' : 'rgba(255,255,255,0.04)'};color:${cur === v ? '#f87171' : '#fff'};font:inherit;font-size:11.5px;font-weight:600;cursor:pointer;letter-spacing:.02em">${l}</button>`).join('')}</div>`;
+        const block = (title, inner) => `<div class="opt-card" style="flex-direction:column;align-items:stretch;gap:8px"><div style="font-size:12.5px;font-weight:600">${title}</div>${inner}</div>`;
+        const sleep = st.sleepAtEnd ? 'end' : st.sleepAt ? 'on' : 'off';
+        pane.innerHTML = block('Player UI size', segs('uiScale', [['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'XL']], S.uiScale || 'm'))
+          + `<div class="opt-card" style="flex-direction:column;align-items:stretch;gap:8px"><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:12.5px;font-weight:600">Caption size</span><span id="vsd-size-val" style="font-size:11px;color:rgba(255,255,255,0.5);font-variant-numeric:tabular-nums">${S.subPx || 24}px</span></div><input id="vsd-size-slider" type="range" min="14" max="56" step="1" value="${S.subPx || 24}" style="width:100%;appearance:none;height:4px;border-radius:2px;background:rgba(255,255,255,0.16);outline:0"></div>`
+          + block('Caption background', segs('subBg', [['shadow', 'Shadow'], ['box', 'Box'], ['none', 'None']], S.subBg || 'shadow'))
+          + block('Caption colour', segs('subColor', [['white', 'White'], ['yellow', 'Yellow'], ['red', 'Red'], ['cyan', 'Cyan']], S.subColor || 'white'))
+          + block('Caption position', segs('subLift', [[0, 'Bottom'], [40, 'Raised'], [120, 'Middle']], S.subLift || 0))
+          + block('Sleep timer', segs('sleep', [['off', 'Off'], [15, '15m'], [30, '30m'], [60, '60m'], ['end', 'End of episode']], sleep === 'end' ? 'end' : sleep === 'on' ? null : 'off'))
+          + card('Auto-play next episode', S.autoplay ? 'On' : 'Off', !!S.autoplay, 'data-toggle="autoplay"', true)
+          + card('Auto-skip intros', S.autoSkip ? 'On' : 'Off', !!S.autoSkip, 'data-toggle="autoSkip"', true)
+          + card('Stats for nerds', st.statsOn ? 'On' : 'Off', st.statsOn, 'data-toggle="stats"', true);
+      }
     }
-    const pmenu = (anchor, items, title) => { menuAt(anchor, items, { into: ui.menu, title }); root.classList.add('menu-open'); showControls(); };
-    function gearMenu(anchor) {
-      const sleepLabel = st.sleepAtEnd ? 'End of episode' : st.sleepAt ? `${Math.max(1, Math.round((st.sleepAt - Date.now()) / 60000))} min left` : 'Off';
-      pmenu(anchor, [
-        { label: 'Stats for nerds', toggle: true, on: st.statsOn, run: () => { st.statsOn = !st.statsOn; ui.stats.hidden = !st.statsOn; if (st.statsOn) renderStats(); } },
-        { label: 'Autoplay next', toggle: true, on: S.autoplay, run: () => Settings.set('autoplay', !S.autoplay) },
-        { label: 'Auto-skip intros', toggle: true, on: S.autoSkip, run: () => Settings.set('autoSkip', !S.autoSkip) },
-        'hr',
-        { label: 'Sleep timer', hint: sleepLabel, run: () => setTimeout(() => sleepMenu(anchor), 10) },
-        { label: 'Subtitle size', hint: S.subSize === 1 ? 'Normal' : S.subSize < 1 ? 'Small' : S.subSize < 1.4 ? 'Large' : 'Huge', run: () => { const steps = [0.8, 1, 1.2, 1.5]; Settings.set('subSize', steps[(steps.indexOf(S.subSize) + 1) % steps.length]); applySubStyle(); flash(`Subtitles ${S.subSize === 1 ? 'normal' : S.subSize < 1 ? 'small' : S.subSize < 1.4 ? 'large' : 'huge'}`, true); } },
-        st.item && !st.item.offline ? { label: Item.isMovie(st.item) ? 'Download this movie' : 'Download this episode', icon: I.download, run: () => startDownload(st.item) } : null,
-        { label: 'Copy link', icon: I.share, run: () => { const it = st.item, e = Item.ep(it); navigator.clipboard.writeText(`${App.boot.host}/${it.title.kind === 'movie' ? 'movies' : it.title.kind}/${it.title.id}${e ? `/${e.season}/${Math.trunc(e.number)}` : ''}`).then(() => toast('Link copied')); } },
-      ].filter(Boolean));
+    ui.settingsWrap.addEventListener('click', async e => {
+      if (e.target.closest('.settings-close, .menu-close, .sheet-close')) { closeSettings(); return; }
+      if (e.target.closest('.menu-back')) { st.tab = 'home'; renderSettingsPane(); return; }
+      const tabBtn = e.target.closest('.settings-tabs .tab'); if (tabBtn) { st.tab = tabBtn.dataset.tab; renderSettingsPane(); return; }
+      const seg = e.target.closest('[data-seg] button[data-v]');
+      if (seg) {
+        const key = seg.parentElement.dataset.seg; const raw = seg.dataset.v; const v = isNaN(Number(raw)) ? raw : Number(raw);
+        if (key === 'sleep') { st.sleepAtEnd = v === 'end'; st.sleepAt = typeof v === 'number' ? Date.now() + v * 60000 : null; notify(v === 'end' ? 'Stops after this episode' : typeof v === 'number' ? `Sleep in ${v} min` : 'Sleep timer off'); }
+        else { Settings.set(key, v); if (key === 'uiScale') applyScale(); else applySubStyle(); }
+        renderSettingsPane(); return;
+      }
+      const c = e.target.closest('.opt-card'); if (!c) return;
+      const d = c.dataset;
+      if (d.go) { st.tab = d.go; renderSettingsPane(); return; }
+      if (d.h) { Settings.set('maxHeight', Number(d.h)); await Settings.push(); loadStream(st.streamIndex, st.pos); closeSettings(); return; }
+      if (d.sub != null) { if (d.sub === 'off') selectSub(null); else selectSub(Number(d.sub)); return; }
+      if (d.tid) { set('sid', d.tid); set('sub-visibility', 'yes'); st.sid = -1; renderSettingsPane(); return; }
+      if (d.cat) { const wantDub = d.cat === 'dub'; if (wantDub === st.item.dub) return; switchDubInPlayer(wantDub); return; }
+      if (d.aid) { set('aid', d.aid); renderSettingsPane(); return; }
+      if (d.alang != null) { Settings.set('audioLang', d.alang); await Settings.push(); loadStream(st.streamIndex, st.pos); closeSettings(); return; }
+      if (d.srv) { const i = Number(d.srv); if (i !== st.streamIndex) { Memory.rememberSource(st.item.title, st.streams[i].source); loadStream(i, st.pos); } closeSettings(); return; }
+      if (d.dl) { startDownload(st.item); closeSettings(); return; }
+      if (d.dlh) { Settings.set('downloadHeight', Number(d.dlh)); renderSettingsPane(); return; }
+      if (d.speed) { setSpeed(Number(d.speed)); return; }
+      if (d.toggle === 'stats') { st.statsOn = !st.statsOn; renderStats(); renderSettingsPane(); return; }
+      if (d.toggle) { Settings.set(d.toggle, !S[d.toggle]); if (d.toggle === 'autoplay') ui.autonext.classList.toggle('on', S.autoplay); renderSettingsPane(); }
+    });
+    ui.settingsWrap.addEventListener('input', e => { if (e.target.id === 'vsd-size-slider') { Settings.set('subPx', Number(e.target.value)); const v = byId('vsd-size-val'); if (v) v.textContent = `${e.target.value}px`; applySubStyle(); } });
+    async function switchDubInPlayer(dub) {
+      const it = st.item;
+      try {
+        const list = await api.get('title', { kind: 'anime', id: String(it.title.id), dub: dub ? '1' : '0' });
+        if (list.dub !== dub) { notify(dub ? 'No dub for this one' : 'Only the dub is available'); return; }
+        Settings.set('dub', dub);
+        const cur = Item.ep(it);
+        let idx = list.episodes.findIndex(e => cur && e.number === cur.number);
+        if (idx < 0) idx = 0;
+        closeSettings();
+        start(Item.make(it.title, list.episodes, idx, dub, st.pos > 5 ? st.pos : null, it.chain));
+      } catch (err) { notify(String(err)); }
     }
-    function sleepMenu(anchor) {
-      const pick = (min, atEnd) => { st.sleepAtEnd = !!atEnd; st.sleepAt = min ? Date.now() + min * 60000 : null; flash(atEnd ? 'Stops after this episode' : min ? `Sleep in ${min} min` : 'Sleep timer off', true); };
-      pmenu(anchor, [{ label: 'Off', on: !st.sleepAt && !st.sleepAtEnd, run: () => pick(0) }, ...[15, 30, 45, 60, 90].map(m => ({ label: `${m} minutes`, run: () => pick(m) })), { label: 'End of this episode', on: st.sleepAtEnd, run: () => pick(0, true) }], 'Sleep timer');
-    }
-    function subMenu(anchor) {
-      const items = [{ label: 'Off', on: st.sid == null, run: () => selectSub(null) }];
-      st.subs.forEach((s, i) => items.push({ label: langName(s.lang), hint: s.lang, on: st.sid === i, run: () => selectSub(i) }));
-      (st.props['track-list'] || []).filter(t => t.type === 'sub' && !t.external).forEach(t => items.push({ label: t.title || langName(t.lang) || `Track ${t.id}`, hint: 'embedded', on: t.selected, run: () => { set('sid', t.id); set('sub-visibility', 'yes'); st.sid = -1; ui.cc.classList.add('on'); } }));
-      if (items.length === 1) items.push({ label: 'No subtitles for this source', run: () => {} });
-      pmenu(anchor, items, 'Subtitles');
-    }
-    function audioMenu(anchor) {
-      const items = [];
-      const internal = (st.props['track-list'] || []).filter(t => t.type === 'audio');
-      if (internal.length > 1) internal.forEach(t => items.push({ label: t.title || langName(t.lang) || `Track ${t.id}`, hint: t.lang || '', on: t.selected, run: () => { set('aid', t.id); flash(t.title || langName(t.lang), true); } }));
-      else if (st.audioTracks && st.audioTracks.length) st.audioTracks.forEach(t => items.push({ label: t.name || langName(t.lang), hint: t.lang, on: S.audioLang ? langMatch(t.lang, S.audioLang) : !!t.default, run: async () => { Settings.set('audioLang', t.lang); await Settings.push(); loadStream(st.streamIndex, st.pos); flash(`${t.name || langName(t.lang)} audio`, true); } }));
-      if (!items.length) items.push({ label: 'Only one audio track', run: () => {} });
-      pmenu(anchor, items, 'Audio');
-    }
-    function qualityMenu(anchor) {
-      const items = [2160, 1080, 720, 480].map(h => ({ label: h === 2160 ? '4K' : `${h}p`, hint: h === 1080 ? 'Full HD' : h === 2160 ? 'Ultra HD' : '', on: S.maxHeight === h, run: async () => { Settings.set('maxHeight', h); await Settings.push(); loadStream(st.streamIndex, st.pos); flash(h === 2160 ? '4K' : `${h}p`, true); } }));
-      if (st.streams.length) items.push('hr');
-      st.streams.forEach((s, i) => items.push({ label: sourceLabel(s.source), hint: i === st.streamIndex ? 'playing' : 'source', on: i === st.streamIndex, run: () => { if (i !== st.streamIndex) { Memory.rememberSource(st.item.title, s.source); loadStream(i, st.pos); } } }));
-      pmenu(anchor, items, 'Quality');
-    }
+
     function onKey(e) {
       if (!st.open) return;
-      if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;
+      if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) { if (e.key === 'Escape') { e.target.blur(); } return; }
       const k = e.key;
       let handled = true;
       switch (k) {
@@ -1105,17 +1295,19 @@
         case 'ArrowUp': setVolume(S.volume + 5); break;
         case 'ArrowDown': setVolume(S.volume - 5); break;
         case 'm': case 'M': toggleMute(); break;
-        case 'f': case 'F': toggleFullscreen(); break;
+        case 'f': case 'F': case 'F11': toggleFullscreen(); break;
         case 'c': case 'C': if (st.subs.length) selectSub(st.sid == null ? 0 : null); break;
         case 'n': case 'N': if (Item.next(st.item)) goNext(); break;
-        case 'e': case 'E': episodesPanel(); break;
+        case 'e': case 'E': toggleDrawer(); break;
         case 'p': case 'P': toggleMini(); break;
-        case 'i': case 'I': st.statsOn = !st.statsOn; ui.stats.hidden = !st.statsOn; if (st.statsOn) renderStats(); break;
-        case '[': setSpeed(S.speed - 0.25); break;
-        case ']': setSpeed(S.speed + 0.25); break;
+        case 's': case 'S': toggleSettings('home'); break;
+        case 'i': case 'I': st.statsOn = !st.statsOn; renderStats(); break;
+        case '[': setSpeed((S.speed || 1) - 0.25); break;
+        case ']': setSpeed((S.speed || 1) + 0.25); break;
         case 'Backspace': setSpeed(1); break;
         case 'Escape':
-          if (!ui.menu.hidden || !ui.panel.hidden) { closeMenus(); ui.panel.hidden = true; }
+          if (root.classList.contains('settings-open')) closeSettings();
+          else if (root.classList.contains('drawer-open')) closeDrawer();
           else if (st.fullscreen) toggleFullscreen(false);
           else if (st.mini) toggleMini(false);
           else close();
@@ -1130,45 +1322,40 @@
     root.addEventListener('mousemove', () => { if (st.open) showControls(); });
     root.addEventListener('mouseleave', () => { if (st.open && !st.paused) scheduleHide(); });
     root.addEventListener('click', e => {
-      if (e.target.closest('.topbar, .controls, .skip-btn, .next-card, .pmenu, .episodes-drawer, .stats')) return;
+      if (e.target.closest('.topbar, .controls, .skip-btn, .next-ep-overlay, .end-actions, .settings-panel-wrap, .drawer, .m-center, .scanning-overlay, .stats, .notif-stack')) return;
+      if (root.classList.contains('settings-open')) { closeSettings(); return; }
+      if (root.classList.contains('drawer-open')) { closeDrawer(); return; }
       if (e.detail === 2) { clearTimeout(clickTimer); toggleFullscreen(); return; }
       clearTimeout(clickTimer);
       clickTimer = setTimeout(() => togglePlay(), 230);
     });
-    root.addEventListener('wheel', e => { if (e.target.closest('.pmenu, .episodes-drawer')) return; setVolume(S.volume + (e.deltaY < 0 ? 5 : -5)); }, { passive: true });
-    ui.play.onclick = togglePlay;
-    ui.rew.onclick = () => seek(-S.skipSeconds);
-    ui.ffw.onclick = () => seek(S.skipSeconds);
+    root.addEventListener('wheel', e => { if (e.target.closest('.drawer, .settings-panel-wrap')) return; setVolume(S.volume + (e.deltaY < 0 ? 5 : -5)); }, { passive: true });
+    document.addEventListener('click', e => { if (!e.target.closest('#season-pill-wrap')) ui.seasonDrop.classList.remove('open'); });
+    ui.playpause.onclick = togglePlay; ui.mPlay.onclick = togglePlay;
+    ui.rew.onclick = () => seek(-S.skipSeconds); ui.mRew.onclick = () => seek(-S.skipSeconds);
+    ui.ffw.onclick = () => seek(S.skipSeconds); ui.mFwd.onclick = () => seek(S.skipSeconds);
     ui.mute.onclick = toggleMute;
-    ui.vol.oninput = () => setVolume(Number(ui.vol.value), true);
+    ui.volume.oninput = () => setVolume(Number(ui.volume.value) * 100, true);
     ui.back.onclick = () => close();
-    ui.full.onclick = () => toggleFullscreen();
-    ui.mini.onclick = () => toggleMini();
-    ui.nextbtn.onclick = goNext;
-    ui.episodes.onclick = episodesPanel;
-    ui.gear.onclick = e => gearMenu(e.currentTarget);
-    ui.cc.onclick = e => subMenu(e.currentTarget);
-    ui.audio.onclick = e => audioMenu(e.currentTarget);
-    ui.quality.onclick = e => qualityMenu(e.currentTarget);
-    ui.speed.onclick = e => pmenu(e.currentTarget, [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map(v => ({ label: `${v}×`, on: S.speed === v, run: () => setSpeed(v) })), 'Speed');
-    [ui.gear, ui.cc, ui.audio, ui.quality, ui.speed].forEach(b => b.setAttribute('data-menu', ''));
-    const scrubAt = e => { const r = ui.scrub.getBoundingClientRect(); return clamp((e.clientX - r.left) / r.width, 0, 1); };
-    ui.scrub.addEventListener('mousemove', e => { if (!st.dur) return; const f = scrubAt(e); ui.hover.hidden = false; ui.hover.style.left = `${f * 100}%`; ui.hover.textContent = clock(f * st.dur); });
-    ui.scrub.addEventListener('mouseleave', () => { ui.hover.hidden = true; });
-    ui.scrub.addEventListener('mousedown', e => {
-      if (!st.dur) return;
-      st.scrubbing = true; ui.scrub.classList.add('drag');
-      const move = ev => { const f = scrubAt(ev); ui.fill.style.width = `${f * 100}%`; ui.thumb.style.left = `${f * 100}%`; ui.pos.textContent = clock(f * st.dur); };
-      const up = ev => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); st.scrubbing = false; ui.scrub.classList.remove('drag'); seek(scrubAt(ev) * st.dur, true); };
-      window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
-      move(e);
-    });
+    ui.fullscreen.onclick = () => toggleFullscreen();
+    ui.pip.onclick = () => toggleMini();
+    ui.nextEpisode.onclick = goNext;
+    ui.episodesToggle.onclick = toggleDrawer;
+    ui.infoBtn.onclick = () => { if (st.item) { openInfo(st.item.title); } };
+    ui.listBtn.onclick = () => toggleList(st.item.title).then(() => ui.listBtn.classList.toggle('on', inList(st.item.title)));
+    ui.nextNow.onclick = goNext;
+    ui.nextCancel.onclick = () => { st.dismissedNext = true; ui.nextOv.classList.add('hidden'); };
+    ui.endReplay.onclick = () => { st.ended = false; ui.endActions.classList.add('hidden'); seek(0, true); set('pause', 'no'); };
+    ui.endNext.onclick = goNext;
+    $$('.settings-trigger', root).forEach(b => b.onclick = () => toggleSettings(b.dataset.openTab || 'home'));
+    const scrubAt = e => { const r = ui.progress.getBoundingClientRect(); return clamp((e.clientX - r.left) / r.width, 0, 1); };
+    ui.seek.addEventListener('input', () => { st.scrubbing = true; const f = Number(ui.seek.value) / 100; ui.play.style.width = `${f * 100}%`; ui.thumb.style.left = `${f * 100}%`; ui.time.textContent = `${tclock(f * st.dur)} / ${tclock(st.dur)}`; });
+    ui.seek.addEventListener('change', () => { st.scrubbing = false; seek(Number(ui.seek.value) / 100 * st.dur, true); });
+    ui.progress.addEventListener('mousedown', e => { if (e.target === ui.seek) return; if (!st.dur) return; seek(scrubAt(e) * st.dur, true); });
     listen('mpv', onEvent);
     setInterval(tick, 1000);
     refreshSkip();
-    $('.lbl', ui.speed).textContent = `${S.speed || 1}×`;
-    ui.vol.value = Math.min(S.volume, 100);
-    ui.mute.innerHTML = S.mute ? I.volx : I.vol;
+    paintVolume();
     return { init, start, close, set, applySubStyle, refreshSkip, get open() { return st.open; } };
   })();
 
@@ -1181,7 +1368,9 @@
   $$('.winctl button').forEach(b => b.onclick = () => invoke('win', { action: b.dataset.win }));
   byId('dragbar').addEventListener('dblclick', () => invoke('win', { action: 'maximize' }));
   window.addEventListener('scroll', () => { byId('topnav').classList.toggle('scrolled', window.scrollY > 40); }, { passive: true });
+  let windowFull = false;
   document.addEventListener('keydown', e => {
+    if (e.key === 'F11') { e.preventDefault(); windowFull = !windowFull; invoke('win', { action: 'fullscreen', on: windowFull }); return; }
     if (Player.open) return;
     if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) { e.preventDefault(); openSearch(); return; }
     if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) { if (e.key === 'Escape') { e.target.blur(); if (ov.classList.contains('open')) closeSearch(); } return; }

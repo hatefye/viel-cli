@@ -420,9 +420,44 @@ impl Api {
         })
     }
 
+    fn anime_art(&self, id: u64) -> Option<(Option<String>, Option<String>)> {
+        let mapped: TmdbMatch = self
+            .client
+            .get(format!("{}/miruro/tmdb-episodes/{id}", self.host))
+            .send()
+            .ok()?
+            .json()
+            .ok()?;
+        let images: ImagesResp = self
+            .client
+            .get(format!("{}/proxy/tmdb/tv/{}/images", self.host, mapped.tmdb_id?))
+            .query(&[("include_image_language", "en,null")])
+            .send()
+            .ok()?
+            .json()
+            .ok()?;
+        let logo = images
+            .logos
+            .iter()
+            .find(|l| l.file_path.ends_with(".png"))
+            .or_else(|| images.logos.first())
+            .map(|l| l.file_path.clone());
+        let backdrop = images.backdrops.first().map(|b| b.file_path.clone());
+        Some((logo, backdrop))
+    }
+
     fn anime_details(&self, id: u64) -> Result<Details> {
         let url = format!("{}/miruro/info/{}", self.host, id);
-        let info: AnimeInfoFull = self.client.get(url).send()?.json()?;
+        let (info, art) = thread::scope(|s| {
+            let a = s.spawn(|| -> Result<AnimeInfoFull> { Ok(self.client.get(url).send()?.json()?) });
+            let b = s.spawn(|| self.anime_art(id));
+            (
+                a.join().unwrap_or_else(|_| Err(anyhow!("anime lookup failed"))),
+                b.join().ok().flatten(),
+            )
+        });
+        let info = info?;
+        let (logo, backdrop) = art.unwrap_or((None, None));
         let name = info
             .title
             .as_ref()
@@ -448,7 +483,7 @@ impl Api {
                 year: info.season_year.map(|y| y.to_string()).unwrap_or_default(),
                 rating: info.average_score.map(|s| s as f64 / 10.0).unwrap_or(0.0),
                 overview,
-                backdrop_path: info.banner_image.filter(|s| !s.is_empty()),
+                backdrop_path: backdrop.or(info.banner_image.filter(|s| !s.is_empty())),
                 genres: info.genres.unwrap_or_default(),
                 ..Title::bare(
                     id,
@@ -457,7 +492,7 @@ impl Api {
                     info.cover_image.and_then(|c| c.extra_large.or(c.large)),
                 )
             },
-            logo: None,
+            logo,
             runtime: info.duration,
             tagline: String::new(),
             cast: studios,
@@ -1238,6 +1273,14 @@ struct GenreItem {
 struct ImagesResp {
     #[serde(default)]
     logos: Vec<ImageItem>,
+    #[serde(default)]
+    backdrops: Vec<ImageItem>,
+}
+
+#[derive(Deserialize)]
+struct TmdbMatch {
+    #[serde(rename = "tmdbId")]
+    tmdb_id: Option<u64>,
 }
 
 #[derive(Deserialize)]
