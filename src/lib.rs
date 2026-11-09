@@ -1,4 +1,5 @@
 pub mod api;
+pub mod captions;
 pub mod fetch;
 pub mod hls;
 pub mod local;

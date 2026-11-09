@@ -208,10 +208,18 @@ final class Core: ObservableObject {
             let subtitle_lang: String
             let audio_lang: String
             let lan_host: String
+            let native_subs: Bool
         }
         let lan = settings.airplay ? (Core.wifiAddress() ?? "") : ""
         let cap = expensive && settings.cellularHeight > 0 ? min(settings.maxHeight, settings.cellularHeight) : settings.maxHeight
-        let _: Ok? = try? await post("settings", Body(max_height: cap, subtitle_lang: settings.subtitleLang, audio_lang: settings.audioLang, lan_host: lan))
+        let _: Ok? = try? await post("settings", Body(max_height: cap, subtitle_lang: settings.subtitleLang, audio_lang: settings.audioLang, lan_host: lan, native_subs: true))
+    }
+
+    func setCaptions(_ text: String) async {
+        var request = URLRequest(url: URL(string: base + "captions")!)
+        request.httpMethod = "POST"
+        request.httpBody = Data(text.utf8)
+        _ = try? await URLSession.shared.data(for: request)
     }
 
     func audioTracks(for url: String) async -> [AudioTrack] {

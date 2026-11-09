@@ -2,6 +2,8 @@ import SwiftUI
 
 enum ReleaseNotes {
     static let current: [(String, String, String)] = [
+        ("pip.fill", "Picture in Picture grew up", "Subtitles now show in the floating window, intros and credits skip themselves, and the next episode starts on its own without leaving PiP."),
+        ("forward.end", "Next episode from anywhere", "The skip button on the lock screen, Control Center and your headphones jumps to the next episode."),
         ("play.rectangle.on.rectangle", "Two more anime sources", "KickAssAnime and ReAnime, both 1080p with sub and dub. KickAssAnime often carries extra dubs like Spanish, German and Hindi."),
         ("repeat", "Loop a section", "Set a start and an end from the player settings to replay a scene or an opening."),
         ("arrow.down.circle.dotted", "Pick a download quality", "Long-press an episode for Download in… 480p to 4K."),

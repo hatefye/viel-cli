@@ -7,6 +7,21 @@ struct Cue {
 }
 
 enum Subtitles {
+    static func vtt(_ cues: [Cue], shift: Double = 0) -> String {
+        var out = "WEBVTT\n"
+        for cue in cues {
+            let start = cue.start + shift, end = cue.end + shift
+            guard end > 0 else { continue }
+            out += "\n\(stamp(max(0, start))) --> \(stamp(end))\n\(cue.text)\n"
+        }
+        return out
+    }
+
+    private static func stamp(_ t: Double) -> String {
+        let ms = Int((t * 1000).rounded())
+        return String(format: "%02d:%02d:%02d.%03d", ms / 3_600_000, ms / 60000 % 60, ms / 1000 % 60, ms % 1000)
+    }
+
     static func parse(_ raw: String) -> [Cue] {
         let text = raw.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
         if text.hasPrefix("[Script Info]") || text.contains("\n[Events]") {

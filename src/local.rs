@@ -379,6 +379,13 @@ fn route(
             if let Some(h) = s.lan_host {
                 relay::set_lan_host(Some(h));
             }
+            if let Some(on) = s.native_subs {
+                crate::captions::enable(on);
+            }
+            json!({ "ok": true })
+        }
+        ("POST", "captions") => {
+            crate::captions::set(&String::from_utf8_lossy(body));
             json!({ "ok": true })
         }
         ("POST", "log") => {
@@ -578,6 +585,7 @@ struct Settings {
     subtitle_lang: Option<String>,
     audio_lang: Option<String>,
     lan_host: Option<String>,
+    native_subs: Option<bool>,
 }
 
 #[derive(Deserialize)]

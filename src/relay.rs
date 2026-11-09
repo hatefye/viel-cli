@@ -1,5 +1,5 @@
 use crate::hls::{self, Part};
-use crate::{local, net, offline};
+use crate::{captions, local, net, offline};
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -364,7 +364,8 @@ fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
             if !text.contains("#EXTM3U") {
                 return Err(anyhow!("not a playlist from {}", net::host(url)));
             }
-            let text = if hls::is_master(&text) {
+            let master = hls::is_master(&text);
+            let text = if master {
                 hls::trim_master(
                     &text,
                     url,
@@ -375,12 +376,22 @@ fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
             } else {
                 text
             };
-            reply(
-                out,
-                "200 OK",
-                "application/vnd.apple.mpegurl",
-                rewrite(&req.host, &text, url, referer).as_bytes(),
-            )?;
+            let mut body = rewrite(&req.host, &text, url, referer);
+            if master && captions::enabled() {
+                if let Some(variant) = captions::first_variant(&text, url) {
+                    body = captions::inject(&body, &link(&req.host, "w", "sub.m3u8", &variant, referer));
+                }
+            }
+            reply(out, "200 OK", "application/vnd.apple.mpegurl", body.as_bytes())?;
+        }
+        "w" if file.ends_with(".m3u8") => {
+            let vtt = link(&req.host, "w", "sub.vtt", url, referer);
+            let body = captions::playlist(url, referer, &vtt)?;
+            reply(out, "200 OK", "application/vnd.apple.mpegurl", body.as_bytes())?;
+        }
+        "w" => {
+            let body = captions::vtt(url, referer);
+            reply(out, "200 OK", "text/vtt; charset=utf-8", body.as_bytes())?;
         }
         "t" => {
             let body = fetch_subtitle(url, referer)?;

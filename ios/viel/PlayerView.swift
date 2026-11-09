@@ -128,22 +128,24 @@ struct PlayerView: View {
             }
         }
         .onChange(of: core.settings.subDelay) { _, value in model.subDelay = value }
-        .onChange(of: model.finished) { _, done in
-            guard done else { return }
-            if let key = current.offline, core.settings.autoDeleteWatched {
-                Task { await core.removeDownload(key) }
-            }
-            if let next = upcoming, current.offline == nil {
-                let length = model.duration > 0 ? model.duration : Double((next.episode?.runtime ?? 24) * 60)
-                Task { await core.saveProgress(next.progress(position: 0, duration: length)) }
-            }
-            if model.sleepAtEnd {
-                dismiss()
-            } else if core.settings.autoplay, !dismissedNext, let next = upcoming {
-                Task { await start(next) }
-            } else {
-                dismiss()
-            }
+    }
+
+    private func ended() {
+        if let key = current.offline, core.settings.autoDeleteWatched {
+            Task { await core.removeDownload(key) }
+        }
+        if let next = upcoming, current.offline == nil {
+            let length = model.duration > 0 ? model.duration : Double((next.episode?.runtime ?? 24) * 60)
+            Task { await core.saveProgress(next.progress(position: 0, duration: length)) }
+        }
+        if model.sleepAtEnd {
+            dismiss()
+        } else if core.settings.autoplay, !dismissedNext, let next = upcoming {
+            Task { await start(next) }
+        } else if model.pipActive {
+            model.player.pause()
+        } else {
+            dismiss()
         }
     }
 
@@ -188,6 +190,12 @@ struct PlayerView: View {
                 let title = Title(id: entry.id, kind: "anime", name: entry.title, year: entry.year, rating: 0, overview: nil, poster: entry.poster ?? item.title.poster, backdrop: item.title.backdrop, genres: item.title.genres, seasons: [])
                 nextSeasonItem = Playable(title: title, episodes: list.episodes, index: 0, dub: list.dub, startAt: nil, chain: item.chain)
             }
+        }
+        model.onEnded = { ended() }
+        model.onNext = upcoming == nil ? nil : {
+            guard let next = upcoming else { return }
+            model.log("next episode from remote")
+            Task { await start(next) }
         }
         await model.start(item, core: core)
     }
@@ -1224,12 +1232,17 @@ struct PlayerSurface: UIViewRepresentable {
             self.model = model
         }
 
+        func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+            model.pipStarting()
+        }
+
         func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
             model.log("pip started")
         }
 
         func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
             model.log("pip stopped")
+            model.pipStopped()
         }
 
         func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
@@ -1275,6 +1288,13 @@ final class PlayerModel: ObservableObject {
     private var lastNowPlaying = Date.distantPast
 
     var pip: AVPictureInPictureController?
+    var pipActive: Bool { pip?.isPictureInPictureActive ?? false }
+    var onEnded: (() -> Void)?
+    var onNext: (() -> Void)? {
+        didSet { MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled = onNext != nil }
+    }
+    private var nativeCaptions = false
+    private var resolveTask: UIBackgroundTaskIdentifier = .invalid
 
     var stream: Stream? { streams.indices.contains(streamIndex) ? streams[streamIndex] : nil }
 
@@ -1321,8 +1341,9 @@ final class PlayerModel: ObservableObject {
             duration = 0
             status = "Finding sources…"
             cleanup()
-            player.replaceCurrentItem(with: nil)
+            if !pipActive { player.replaceCurrentItem(with: nil) }
         }
+        holdBackground()
         cues = []
         passed = []
         startAt = item.startAt
@@ -1476,6 +1497,7 @@ final class PlayerModel: ObservableObject {
             (center.togglePlayPauseCommand, { [weak self] _ in self?.togglePlay() }),
             (center.skipForwardCommand, { [weak self] _ in self?.skip(10) }),
             (center.skipBackwardCommand, { [weak self] _ in self?.skip(-10) }),
+            (center.nextTrackCommand, { [weak self] _ in self?.onNext?() }),
             (center.changePlaybackPositionCommand, { [weak self] event in
                 if let at = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime { self?.seek(to: at) }
             }),
@@ -1640,6 +1662,7 @@ final class PlayerModel: ObservableObject {
                 await MainActor.run {
                     if mine == self.generation, self.subIndex == index {
                         self.cues = parsed
+                        if self.pipActive { self.pipStarting() }
                     }
                 }
                 self.log("subtitles \(lang): \(parsed.count) cues")
@@ -1647,6 +1670,43 @@ final class PlayerModel: ObservableObject {
                 self.log("subtitles \(lang) failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    func pipStarting() {
+        guard let stream, stream.hls, subsEnabled, !cues.isEmpty, let core else { return }
+        let text = Subtitles.vtt(cues, shift: -subDelay)
+        Task {
+            await core.setCaptions(text)
+            await MainActor.run { self.showNativeCaptions(true) }
+        }
+    }
+
+    func pipStopped() {
+        showNativeCaptions(false)
+    }
+
+    private func showNativeCaptions(_ on: Bool) {
+        guard let avItem = player.currentItem, on || nativeCaptions else { return }
+        Task {
+            guard let group = try? await avItem.asset.loadMediaSelectionGroup(for: .legible) else { return }
+            let option = group.options.first { $0.displayName == "Subtitles" } ?? group.options.first
+            await MainActor.run {
+                avItem.select(on ? option : nil, in: group)
+                self.nativeCaptions = on && option != nil
+                self.log(on ? (option == nil ? "pip: no caption track" : "pip: captions on") : "pip: captions off")
+            }
+        }
+    }
+
+    private func holdBackground() {
+        releaseBackground()
+        resolveTask = UIApplication.shared.beginBackgroundTask(withName: "resolve") { [weak self] in self?.releaseBackground() }
+    }
+
+    private func releaseBackground() {
+        guard resolveTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(resolveTask)
+        resolveTask = .invalid
     }
 
     func togglePip() {
@@ -1734,6 +1794,8 @@ final class PlayerModel: ObservableObject {
                     if !stream.isOffline, let item = self.item { Memory.remember(source: stream.source, for: item.title.key) }
                     self.status = nil
                     self.stopActivity()
+                    self.releaseBackground()
+                    if self.pipActive { self.pipStarting() }
                     if let at = self.startAt, at > 0 {
                         self.player.seek(to: CMTime(seconds: at, preferredTimescale: 600))
                         self.startAt = nil
@@ -1761,6 +1823,7 @@ final class PlayerModel: ObservableObject {
             if length.isFinite, length > 0 { self.report(length) }
             self.log("finished")
             self.finished = true
+            self.onEnded?()
         })
         observers.append(center.addObserver(forName: .AVPlayerItemPlaybackStalled, object: avItem, queue: .main) { [weak self] _ in
             self?.log("stalled at \(Int(self?.position ?? 0))s")
@@ -1887,6 +1950,10 @@ final class PlayerModel: ObservableObject {
             }
         }
         if target != skipTarget { skipTarget = target }
+        if target != nil, pipActive {
+            log("pip: auto skip")
+            skipMarker()
+        }
         if Date().timeIntervalSince(lastReport) >= 10 {
             report(seconds)
         }

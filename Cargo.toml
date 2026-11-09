@@ -38,6 +38,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 ratatui = { version = "0.30", optional = true }
 ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"], optional = true }
 mp4 = "0.14"
+aes = "0.8"
+cbc = "0.1"
 
 [profile.release]
 strip = true
