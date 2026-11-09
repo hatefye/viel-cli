@@ -10,8 +10,8 @@ use std::thread;
 use std::time::Duration;
 
 const SOURCES: [&str; 5] = ["cno", "vixsrc", "mapple", "vidbolt", "vidrock"];
-const ANIME_SUB: [&str; 4] = ["kototv", "animeparadise", "animekai", "luffy"];
-const ANIME_DUB: [&str; 3] = ["kototv", "animekai", "luffy"];
+const ANIME_SUB: [&str; 6] = ["kototv", "animeparadise", "animekai", "kaa", "reanime", "luffy"];
+const ANIME_DUB: [&str; 5] = ["kototv", "animekai", "kaa", "reanime", "luffy"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -800,7 +800,10 @@ impl Api {
             return None;
         }
         let body: AnimeSourcesResp = resp.json().ok()?;
-        let chosen = body.streams.into_iter().find(|s| !s.url.is_empty())?;
+        let mut streams: Vec<AnimeStreamRaw> =
+            body.streams.into_iter().filter(|s| !s.url.is_empty()).collect();
+        streams.sort_by_key(|s| !s.app);
+        let chosen = streams.into_iter().next()?;
         let hls = chosen.kind.eq_ignore_ascii_case("hls")
             || chosen.url.contains(".m3u8")
             || chosen.kind.is_empty();
@@ -823,7 +826,7 @@ impl Api {
             .filter(|i| i.end > i.start)
             .map(|i| (i.start, i.end));
         let thumbs = body.thumbnails.filter(|t| t.starts_with("http"));
-        Some(Stream {
+        let stream = Stream {
             source: provider.to_string(),
             url: chosen.url,
             referer: chosen.referer,
@@ -834,8 +837,8 @@ impl Api {
             intro,
             outro,
             thumbs,
-        })
-        .filter(playable)
+        };
+        Some(stream).filter(playable)
     }
 
     pub fn anime_name(&self, anilist_id: u64) -> Option<String> {
@@ -1928,6 +1931,8 @@ struct AnimeStreamRaw {
     #[serde(rename = "type", default)]
     kind: String,
     referer: Option<String>,
+    #[serde(default)]
+    app: bool,
 }
 
 #[derive(Deserialize)]

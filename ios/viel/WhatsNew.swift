@@ -2,6 +2,7 @@ import SwiftUI
 
 enum ReleaseNotes {
     static let current: [(String, String, String)] = [
+        ("play.rectangle.on.rectangle", "Two more anime sources", "KickAssAnime and ReAnime, both 1080p with sub and dub. KickAssAnime often carries extra dubs like Spanish, German and Hindi."),
         ("repeat", "Loop a section", "Set a start and an end from the player settings to replay a scene or an opening."),
         ("arrow.down.circle.dotted", "Pick a download quality", "Long-press an episode for Download in… 480p to 4K."),
         ("antenna.radiowaves.left.and.right.slash", "Cellular cap and offline mode", "Limit quality on cellular under Playback. Offline, the home page points you to your downloads."),

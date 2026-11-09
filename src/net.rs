@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use reqwest::blocking::{Client, Response};
-use reqwest::header::{RANGE, REFERER};
+use reqwest::header::{ORIGIN, RANGE, REFERER};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use std::thread::sleep;
@@ -49,8 +49,14 @@ pub fn send_with(
     let mut h2 = h2_hosts().lock().unwrap().contains(host(url));
     for _ in 0..attempts {
         let mut req = if h2 { h2_client() } else { client() }.get(url);
-        if let Some(r) = referer.filter(|r| !r.is_empty()) {
-            req = req.header(REFERER, r);
+        match referer.filter(|r| !r.is_empty()).map(|r| r.strip_prefix("origin:").ok_or(r)) {
+            Some(Ok(origin)) => {
+                req = req
+                    .header(ORIGIN, origin.trim_end_matches('/'))
+                    .header(REFERER, format!("{}/", origin.trim_end_matches('/')));
+            }
+            Some(Err(r)) => req = req.header(REFERER, r),
+            None => {}
         }
         if let Some(r) = range {
             req = req.header(RANGE, r);
