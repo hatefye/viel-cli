@@ -10,6 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const FIRST_HIT_GRACE: Duration = Duration::from_secs(6);
+const BETTER_HIT_GRACE: Duration = Duration::from_secs(12);
 const RESOLVE_LIMIT: Duration = Duration::from_secs(25);
 
 #[derive(Clone, Serialize)]
@@ -56,9 +57,13 @@ where
     let started = Instant::now();
     let mut first_hit: Option<Instant> = None;
     let mut slots: Vec<Option<Stream>> = names.iter().map(|_| None).collect();
+    let mut done = vec![false; names.len()];
     let mut pending = names.len();
     while pending > 0 {
+        let best = slots.iter().position(Option::is_some).unwrap_or(names.len());
+        let better_pending = done[..best].iter().any(|d| !d);
         let deadline = match first_hit {
+            Some(at) if better_pending => (at + BETTER_HIT_GRACE).min(started + RESOLVE_LIMIT),
             Some(at) => (at + FIRST_HIT_GRACE).min(started + RESOLVE_LIMIT),
             None => started + RESOLVE_LIMIT,
         };
@@ -69,6 +74,7 @@ where
         match rx.recv_timeout(deadline - now) {
             Ok((index, found)) => {
                 pending -= 1;
+                done[index] = true;
                 if found.is_some() && first_hit.is_none() {
                     first_hit = Some(Instant::now());
                 }

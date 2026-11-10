@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
+use std::io::Read;
 use std::thread;
 use std::time::Duration;
 
@@ -1269,11 +1270,17 @@ pub struct HistoryEntry {
     pub updated_at: u64,
 }
 
+fn head_bytes(resp: reqwest::blocking::Response) -> Result<Vec<u8>> {
+    let mut buf = Vec::with_capacity(4096);
+    resp.take(4096).read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
 pub fn playable(stream: &Stream) -> bool {
     let referer = stream.referer.as_deref();
     if !stream.hls {
         return net::send_with(&stream.url, referer, Some("bytes=0-4095"), 2)
-            .and_then(|r| Ok(r.bytes()?.to_vec()))
+            .and_then(head_bytes)
             .map(|b| net::looks_like_video(&b))
             .unwrap_or(false);
     }
@@ -1291,8 +1298,12 @@ pub fn playable(stream: &Stream) -> bool {
             .map(str::trim)
             .find(|l| !l.is_empty() && !l.starts_with('#'))
             .ok_or_else(|| anyhow!("empty playlist"))?;
-        let bytes =
-            net::send_with(&net::join(&url, segment), referer, Some("bytes=0-4095"), 2)?.bytes()?;
+        let bytes = head_bytes(net::send_with(
+            &net::join(&url, segment),
+            referer,
+            Some("bytes=0-4095"),
+            2,
+        )?)?;
         Ok(net::looks_like_video(&bytes))
     };
     check().unwrap_or(false)
