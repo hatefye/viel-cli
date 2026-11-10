@@ -142,3 +142,25 @@ html.video #ambient,html.video .nav,html.video #scroller,html.video .winctl,html
 .player-root .seek-flash span{font-size:13px;font-weight:700}
 html.video #info-ov{display:flex;z-index:90}
 html.video #info-ov:not(.open){display:none}
+
+html.video{zoom:1;--z:1}
+html.video #info-ov{zoom:1.1;--z:1.1}
+.player-root{letter-spacing:normal}
+.player-root .rail{margin-top:0}
+:where(.player-root) button{font-family:revert}
+
+.vs-card.auth-card{width:min(400px,100%);background:#111215;border-color:var(--pill-brd);border-radius:16px;backdrop-filter:none;-webkit-backdrop-filter:none}
+.auth-card .vs-head{border-bottom:0;padding:22px 26px 2px}
+.auth-card .vs-title{font-size:22px;letter-spacing:-.02em}
+.auth-card .vs-body{padding:16px 26px 26px}
+.auth-f{display:block;margin-bottom:14px}
+.auth-f span{display:block;margin-bottom:6px;font-size:12.5px;font-weight:600;color:rgba(255,255,255,.6)}
+.auth-f input{width:100%;height:44px;padding:0 13px;border-radius:9px;border:1px solid rgba(255,255,255,.12);background:#0b0c0f;color:#fff;font:inherit;font-size:14.5px;outline:0;transition:border-color .15s}
+.auth-f input:focus{border-color:rgba(255,255,255,.5)}
+.auth-go{width:100%;height:44px;margin-top:6px;border-radius:9px;background:#fff;color:#0b0c10;font-size:14.5px;font-weight:700}
+.auth-go:disabled{opacity:.55;cursor:default}
+.auth-alt{margin:16px 0 0;font-size:13px;color:rgba(255,255,255,.55)}
+.auth-alt button{font-size:13px;font-weight:600;color:#fff;text-decoration:underline;text-underline-offset:3px}
+.auth-card .vs-msg{margin:0 0 8px}
+.auth-card .vs-msg:empty{display:none}
+.player-root img{max-width:none}

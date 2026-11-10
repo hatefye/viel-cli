@@ -127,10 +127,10 @@
     </div>
 <header class="topbar">
       <div class="tb-left">
-        <button type="button" class="back" id="pl-back" aria-label="Back">
+        <a class="back" id="pl-back" role="button" aria-label="Back">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"></path></svg>
-          <span class="back-label">Back</span>
-        </button>
+          <span class="back-label">Back to home</span>
+        </a>
         <span class="tb-sep">/</span>
         <span class="tb-title" id="tb-title"></span>
         <button id="title-info-btn" class="tb-icon" aria-label="About this title" title="About this title">
@@ -236,7 +236,10 @@
         </div>
         <div class="settings-body">
           <div class="settings-pane" data-pane="home" id="pane-home"></div>
+          <div class="settings-pane" data-pane="segments" id="pane-segments"></div>
+          <div class="settings-pane" data-pane="keys" id="pane-keys"></div>
           <div class="settings-pane" data-pane="quality" id="pane-quality"></div>
+          <div class="settings-pane" data-pane="subtitles" id="pane-subtitles"></div>
           <div class="settings-pane" data-pane="audio" id="pane-audio"></div>
           <div class="settings-pane" data-pane="servers" id="pane-servers"></div>
           <div class="settings-pane" data-pane="download" id="pane-download"></div>
@@ -261,7 +264,7 @@
           </button>
           <div class="season-dropdown" id="season-dropdown"></div>
         </div>
-        <button class="autonext on" type="button" id="autonext-btn">
+        <button class="autonext" type="button" id="autonext-btn">
           <span>Auto next</span>
           <span class="switch"></span>
         </button>
@@ -273,7 +276,11 @@
         <div class="title" id="season-banner-title"></div>
         <p class="desc" id="season-banner-desc"></p>
       </div>
-      <div class="episodes-stack sheet" id="episodes-stack"></div>
+      <div class="ep-strip">
+        <div class="episodes-stack sheet" id="episodes-stack"></div>
+        <button type="button" class="ep-arrow l" id="ep-arrow-l" aria-label="Earlier episodes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"></path></svg></button>
+        <button type="button" class="ep-arrow r" id="ep-arrow-r" aria-label="Later episodes"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg></button>
+      </div>
       <button class="sheet-close" id="drawer-sheet-close" type="button">Close</button>
     </aside>
 </div>

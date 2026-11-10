@@ -696,7 +696,7 @@
   function afterSetting(key) {
     if (key === 'maxHeight' || key === 'subtitleLang' || key === 'audioLang') Settings.push();
     if (key === 'hwdec') Player.set('hwdec', S.hwdec ? 'auto-safe' : 'no');
-    if (key === 'subBg' || key === 'subColor') Player.applySubStyle();
+    if (key === 'subBg' || key === 'subColor' || key === 'subFont') Player.applySubStyle();
     if (key === 'skipSeconds') Player.refreshSkip();
     if (key === 'heroRotate') renderHero();
     if (key === 'tray') invoke('set_tray', { on: !!S.tray });
@@ -716,10 +716,17 @@
       byId('acc-out').onclick = async () => { await api.post('logout').catch(() => {}); setUser(null); App.home = null; App.watchlist = null; App.history = null; m.close(); accountModal = null; openAccount(); };
     } else {
       let mode = 'login';
-      m.body.innerHTML = `<div class="vs-section"><div class="vs-label">Welcome</div><div class="vs-auth-tabs"><button class="vs-auth-tab active" data-m="login">Sign in</button><button class="vs-auth-tab" data-m="register">Create account</button></div>
-        <form id="auth-form" autocomplete="off"><input class="vs-input" name="username" placeholder="Username" autocomplete="username" required><input class="vs-input" name="password" type="password" placeholder="Password" autocomplete="current-password" required><button class="vs-btn" type="submit" id="auth-submit">Sign in</button><div class="vs-msg" id="auth-msg"></div>
-        <div style="margin-top:14px;font-size:11.5px;color:rgba(255,255,255,.45);line-height:1.45;text-align:center">Same account as the website and the iPhone app.</div></form></div>`;
-      $$('.vs-auth-tab', m.body).forEach(b => b.onclick = () => { mode = b.dataset.m; $$('.vs-auth-tab', m.body).forEach(x => x.classList.toggle('active', x === b)); byId('auth-submit').textContent = mode === 'login' ? 'Sign in' : 'Create account'; });
+      $('.vs-card', m.wrap).classList.add('auth-card');
+      m.body.innerHTML = `<form id="auth-form" autocomplete="off"><label class="auth-f"><span>Username</span><input name="username" autocomplete="username" spellcheck="false" required></label><label class="auth-f"><span>Password</span><input name="password" type="password" autocomplete="current-password" required></label><div class="vs-msg" id="auth-msg"></div><button class="auth-go" type="submit" id="auth-submit">Sign in</button><p class="auth-alt"><span id="auth-alt-q">No account yet?</span> <button type="button" id="auth-alt">Create one</button></p></form>`;
+      byId('auth-alt').onclick = () => {
+        mode = mode === 'login' ? 'register' : 'login';
+        const login = mode === 'login';
+        $('.vs-title', m.wrap).textContent = login ? 'Sign in' : 'Create account';
+        byId('auth-submit').textContent = login ? 'Sign in' : 'Create account';
+        byId('auth-alt-q').textContent = login ? 'No account yet?' : 'Already have one?';
+        byId('auth-alt').textContent = login ? 'Create one' : 'Sign in';
+        byId('auth-msg').textContent = '';
+      };
       byId('auth-form').onsubmit = async e => {
         e.preventDefault();
         const f = e.target, msg = byId('auth-msg');
@@ -750,9 +757,9 @@
       scanning: q('scanning-overlay'), finderPoster: q('finder-poster'), finderKicker: q('finder-kicker'), finderTitle: q('finder-title'), finderEp: q('finder-ep'), scanMsg: q('scanning-msg'), finderSub: q('finder-sub'), finderFill: q('finder-bar-fill'), finderCount: q('finder-count'), finderSources: q('finder-sources'),
       toast: q('source-toast'), notifs: q('notif-stack'),
       settingsWrap: q('settings-panel-wrap'), settingsTitle: q('settings-title'), settingsBack: q('settings-back'),
-      drawer: q('drawer'), lead: q('sheet-lead'), search: q('search-input'), seasonWrap: q('season-pill-wrap'), seasonBtn: q('season-pill-btn'), seasonLabel: q('season-pill-label'), seasonDrop: q('season-dropdown'), autonext: q('autonext-btn'), drawerClose: q('drawer-close'), bannerTitle: q('season-banner-title'), bannerDesc: q('season-banner-desc'), stack: q('episodes-stack'), drawerSheetClose: q('drawer-sheet-close'),
+      drawer: q('drawer'), lead: q('sheet-lead'), search: q('search-input'), seasonWrap: q('season-pill-wrap'), seasonBtn: q('season-pill-btn'), seasonLabel: q('season-pill-label'), seasonDrop: q('season-dropdown'), autonext: q('autonext-btn'), drawerClose: q('drawer-close'), bannerTitle: q('season-banner-title'), bannerDesc: q('season-banner-desc'), stack: q('episodes-stack'), arrowL: q('ep-arrow-l'), arrowR: q('ep-arrow-r'), drawerSheetClose: q('drawer-sheet-close'),
     };
-    const st = { open: false, ready: false, initError: null, item: null, details: null, streams: [], streamIndex: -1, stream: null, candidates: [], loading: false, pos: 0, dur: 0, paused: true, subs: [], sid: null, audioTracks: null, lastSave: 0, lastSavedPos: -1, dismissedNext: false, skipped: new Set(), hideTimer: null, fullscreen: false, mini: false, scrubbing: false, props: {}, sleepAt: null, sleepAtEnd: false, statsOn: false, finishedAt: 0, ended: false, tab: null, drawerSeason: null, volumeBeforeMute: 100 };
+    const st = { open: false, ready: false, initError: null, item: null, details: null, streams: [], streamIndex: -1, stream: null, candidates: [], loading: false, pos: 0, dur: 0, paused: true, subs: [], sid: null, audioTracks: null, lastSave: 0, lastSavedPos: -1, dismissedNext: false, skipped: new Set(), hideTimer: null, fullscreen: false, mini: false, scrubbing: false, props: {}, sleepAt: null, sleepAtEnd: false, statsOn: false, finishedAt: 0, ended: false, tab: null, drawerSeason: null, browse: null, volumeBeforeMute: 100 };
     const cmd = (...args) => invoke('player_cmd', { args: args.map(String) }).catch(e => log('mpv', `${args.join(' ')} → ${e}`));
     const set = (name, value) => invoke('player_set', { name, value: String(value) }).catch(e => log('mpv', `set ${name} → ${e}`));
     const get = name => invoke('player_get', { name }).catch(() => null);
@@ -779,7 +786,9 @@
       set('sub-border-size', bg === 'none' ? 0 : bg === 'box' ? 1.2 : 2.6);
       set('sub-shadow-offset', bg === 'shadow' ? 2 : 0);
       set('sub-color', { white: '#FFFFFF', yellow: '#FDE047', red: '#F87171', cyan: '#67E8F9' }[S.subColor || 'white']);
-      set('sub-margin-y', Math.round(60 + (S.subLift || 0) * 2));
+      set('sub-margin-y', 60);
+      set('sub-pos', clamp((S.subPos == null ? 85 : S.subPos) + 15, 0, 150));
+      set('sub-font', { serif: 'Georgia', mono: 'Consolas' }[S.subFont] || 'sans-serif');
     }
     function refreshSkip() { const n = S.skipSeconds; ui.rew.title = `-${n}s`; ui.ffw.title = `+${n}s`; }
     function applyScale() { ['s', 'm', 'l', 'xl'].forEach(k => root.classList.toggle(`ui-scale-${k}`, (S.uiScale || 'm') === k)); }
@@ -931,14 +940,12 @@
       ui.logo.style.display = 'none';
       ui.pauseEp.textContent = e ? (e.name || `Episode ${numText(e.number)}`) : '';
       ui.pauseDesc.textContent = e ? (e.overview || '') : (it.title.overview || '');
-      ui.pauseMeta.textContent = e ? [`Episode ${numText(e.number)}`, e.runtime ? human(e.runtime) : ''].filter(Boolean).join(' · ') : [it.title.year, kindLabel(it.title.kind)].filter(Boolean).join(' · ');
-      ui.lead.textContent = it.title.name;
-      ui.bannerTitle.textContent = it.title.name;
+      ui.pauseMeta.textContent = e ? [anime ? '' : `Season ${e.season}`, `Episode ${numText(e.number)}`, e.runtime ? human(e.runtime) : ''].filter(Boolean).join(' · ') : [it.title.year, kindLabel(it.title.kind)].filter(Boolean).join(' · ');
       detailsFor(it.title).then(d => {
         if (!d || st.item !== it) return;
         st.details = d;
         if (d.logo) { ui.logo.src = d.logo; ui.logo.style.display = 'block'; ui.showTitle.style.display = 'none'; }
-        if (e) ui.pauseMeta.textContent = [`Episode ${numText(e.number)}`, (e.runtime || d.runtime) ? human(e.runtime || d.runtime) : ''].filter(Boolean).join(' · ');
+        if (e) ui.pauseMeta.textContent = [anime ? '' : `Season ${e.season}`, `Episode ${numText(e.number)}`, (e.runtime || d.runtime) ? human(e.runtime || d.runtime) : ''].filter(Boolean).join(' · ');
         else { ui.pauseMeta.textContent = [d.year, d.runtime ? human(d.runtime) : '', (d.genres || []).slice(0, 2).join(' · ')].filter(Boolean).join(' · '); if (!ui.pauseDesc.textContent) ui.pauseDesc.textContent = d.overview || ''; }
         ui.bannerDesc.textContent = d.overview || '';
       });
@@ -1133,68 +1140,137 @@
       renderDrawer();
       ui.drawer.classList.add('open'); ui.drawer.setAttribute('aria-hidden', 'false');
       root.classList.add('drawer-open');
-      setTimeout(() => { const on = $('.ep-tile.active', ui.stack); if (on) on.scrollIntoView({ inline: 'center', block: 'nearest' }); }, 50);
+      requestAnimationFrame(centerActive);
     }
-    function closeDrawer() { ui.drawer.classList.remove('open'); ui.drawer.setAttribute('aria-hidden', 'true'); root.classList.remove('drawer-open'); ui.seasonDrop.classList.remove('open'); }
+    function closeDrawer() { ui.drawer.classList.remove('open'); ui.drawer.setAttribute('aria-hidden', 'true'); root.classList.remove('drawer-open'); ui.seasonWrap.classList.remove('open'); st.browse = null; }
     function toggleDrawer() { if (root.classList.contains('drawer-open')) closeDrawer(); else openDrawer(); }
     function renderDrawer() {
-      const it = st.item, anime = Item.isAnime(it), cur = Item.ep(it);
+      const playing = st.item, it = st.browse || playing, anime = Item.isAnime(it), cur = st.browse ? null : Item.ep(it);
       const seasons = anime ? [] : Array.from(new Set(it.episodes.map(e => e.season)));
       if (st.drawerSeason == null || (!anime && !seasons.includes(st.drawerSeason))) st.drawerSeason = cur ? cur.season : seasons[0];
       ui.autonext.classList.toggle('on', !!S.autoplay);
       if (anime) {
-        const chain = it.chain || [];
-        ui.seasonLabel.textContent = (chain.find(c => c.id === it.title.id) || {}).title || it.title.name;
-        ui.seasonDrop.innerHTML = chain.map((c, i) => `<div class="item${c.id === it.title.id ? ' active' : ''}" data-a="${c.id}">${esc(c.title || `Season ${c.season}`)}</div>`).join('');
+        const chain = playing.chain || [];
+        const name = (chain.find(c => c.id === it.title.id) || {}).title || it.title.name;
+        ui.seasonLabel.textContent = `S${Math.max(chain.findIndex(c => c.id === it.title.id), 0) + 1}`;
+        ui.seasonDrop.innerHTML = chain.map(c => `<div class="item${c.id === it.title.id ? ' active' : ''}" data-a="${c.id}">${esc(c.title || `Season ${c.season}`)}</div>`).join('');
+        ui.lead.textContent = name; ui.bannerTitle.textContent = name;
       } else {
+        const name = st.drawerSeason === 0 ? 'Specials' : `Season ${st.drawerSeason}`;
         ui.seasonLabel.textContent = st.drawerSeason === 0 ? 'Specials' : `S${st.drawerSeason}`;
         ui.seasonDrop.innerHTML = seasons.map(s => `<div class="item${s === st.drawerSeason ? ' active' : ''}" data-s="${s}">${s === 0 ? 'Specials' : `Season ${s}`}</div>`).join('');
+        ui.lead.textContent = name; ui.bannerTitle.textContent = name;
       }
+      ui.search.placeholder = anime ? 'Episode # or title' : 'Search';
       const needle = (ui.search.value || '').trim().toLowerCase();
       const watched = Memory.watched(tkey(it.title));
+      const saved = inList(it.title);
       ui.stack.innerHTML = it.episodes.map((e, i) => {
         if (!anime && e.season !== st.drawerSeason) return '';
         if (needle && !(String(e.number).includes(needle) || (e.name || '').toLowerCase().includes(needle))) return '';
-        const active = i === it.index;
+        const active = !st.browse && i === it.index;
         const seen = watched.has(`${e.season}-${Math.trunc(e.number)}`);
-        return `<a class="ep-tile${active ? ' active playing' : ''}" data-i="${i}"><span class="th">${(e.still || it.title.poster) ? `<img loading="lazy" decoding="async" src="${esc(e.still || it.title.poster)}" alt="">` : ''}<span class="num">E${esc(numText(e.number))}</span><span class="now">NOW PLAYING</span><span class="tile-acts"><button type="button" class="save${inList(it.title) ? ' on' : ''}" data-act="save" aria-label="Save to My List"><svg viewBox="0 0 24 24"><path d="M6 4h12a1 1 0 0 1 1 1v15.4a.6.6 0 0 1-.92.5L12 17.5l-6.08 3.9A.6.6 0 0 1 5 20.9V5a1 1 0 0 1 1-1z"></path></svg></button><button type="button" class="seen${seen ? ' on' : ''}" data-act="seen" aria-label="Mark watched"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg></button></span></span><span class="body"><span class="tt">${esc(e.name || `Episode ${numText(e.number)}`)}</span><p class="desc">${esc(e.overview || '')}</p><span class="rm">${e.runtime ? esc(human(e.runtime)) : ''}</span></span></a>`;
-      }).join('') || '<div style="padding:20px;color:var(--fg-mid)">No episodes match.</div>';
+        const still = e.still || it.title.poster;
+        return `<a class="ep-tile${seen ? ' seen' : ''}${active ? ' active playing' : ''}" data-i="${i}"><span class="th">${still ? `<img loading="lazy" decoding="async" src="${esc(still)}" alt="">` : ''}<span class="num">E${esc(numText(e.number))}</span><span class="now">NOW PLAYING</span><span class="tile-acts"><button type="button" class="save${saved ? ' on' : ''}" data-act="save" aria-label="Save to My List"><svg viewBox="0 0 24 24"><path d="M6 4h12a1 1 0 0 1 1 1v15.4a.6.6 0 0 1-.92.5L12 17.5l-6.08 3.9A.6.6 0 0 1 5 20.9V5a1 1 0 0 1 1-1z"></path></svg></button><button type="button" class="seen${seen ? ' on' : ''}" data-act="seen" aria-label="Mark watched"><svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg></button></span></span><span class="body"><span class="tt">${esc(e.name || `Episode ${numText(e.number)}`)}</span>${e.overview ? `<p class="desc">${esc(e.overview)}</p>` : ''}${e.runtime ? `<span class="rm">${esc(human(e.runtime))}</span>` : ''}</span></a>`;
+      }).join('');
+      paintArrows();
     }
     ui.stack.addEventListener('click', e => {
       const act = e.target.closest('[data-act]');
       const tile = e.target.closest('.ep-tile');
       if (!tile) return;
-      const i = Number(tile.dataset.i), ep = st.item.episodes[i];
+      e.preventDefault();
+      const src = st.browse || st.item;
+      const i = Number(tile.dataset.i), ep = src.episodes[i];
       if (act) {
-        e.preventDefault(); e.stopPropagation();
-        if (act.dataset.act === 'save') { toggleList(st.item.title).then(() => renderDrawer()); }
-        else { const key = tkey(st.item.title), k = `${ep.season}-${Math.trunc(ep.number)}`; const m = Memory.map('watched'); const s = new Set(m[key] || []); if (s.has(k)) s.delete(k); else s.add(k); m[key] = Array.from(s); Memory.store('watched', m); act.classList.toggle('on'); }
+        e.stopPropagation();
+        if (act.dataset.act === 'save') { toggleList(src.title).then(() => renderDrawer()); }
+        else { const key = tkey(src.title), k = `${ep.season}-${Math.trunc(ep.number)}`; const m = Memory.map('watched'); const set = new Set(m[key] || []); if (set.has(k)) set.delete(k); else set.add(k); m[key] = Array.from(set); Memory.store('watched', m); act.classList.toggle('on'); tile.classList.toggle('seen'); }
         return;
       }
-      if (i !== st.item.index) { closeDrawer(); start(Item.at(st.item, i)); } else closeDrawer();
+      if (st.browse || i !== st.item.index) { closeDrawer(); start(Item.at(src, i)); } else closeDrawer();
     });
-    ui.seasonBtn.onclick = e => { e.stopPropagation(); ui.seasonDrop.classList.toggle('open'); };
+    ui.seasonBtn.onclick = e => { e.stopPropagation(); ui.seasonWrap.classList.toggle('open'); };
     ui.seasonDrop.addEventListener('click', async e => {
       const item = e.target.closest('.item'); if (!item) return;
-      ui.seasonDrop.classList.remove('open');
-      if (item.dataset.s != null) { st.drawerSeason = Number(item.dataset.s); renderDrawer(); return; }
+      e.stopPropagation();
+      ui.seasonWrap.classList.remove('open');
+      if (item.dataset.s != null) { st.drawerSeason = Number(item.dataset.s); renderDrawer(); ui.stack.scrollLeft = 0; return; }
       const id = Number(item.dataset.a);
-      if (id === st.item.title.id) return;
+      if (id === st.item.title.id) { st.browse = null; renderDrawer(); centerActive(); return; }
+      if (st.browse && st.browse.title.id === id) return;
+      ui.seasonLabel.textContent = `S${Array.from(ui.seasonDrop.children).indexOf(item) + 1}`;
+      ui.stack.innerHTML = '';
       try {
         const [d, list] = await Promise.all([api.get('details', { kind: 'anime', id: String(id) }), api.get('title', { kind: 'anime', id: String(id), dub: st.item.dub ? '1' : '0' })]);
         App.details[`anime-${id}`] = d;
         const title = remember({ id: d.id, kind: 'anime', name: d.name, year: d.year, rating: d.rating, overview: d.overview, poster: d.poster, backdrop: d.backdrop, genres: d.genres, seasons: d.seasons });
-        if (!list.episodes.length) { notify('No episodes listed for that season'); return; }
-        closeDrawer();
-        start(Item.make(title, list.episodes, 0, list.dub, null, d.seasons || []));
-      } catch (err) { notify(String(err)); }
+        st.browse = Item.make(title, list.episodes, -1, list.dub, null, d.seasons || st.item.chain || []);
+        st.browse.overview = d.overview || '';
+        renderDrawer();
+        ui.stack.scrollLeft = 0;
+      } catch (err) { st.browse = null; renderDrawer(); notify(String(err)); }
+    });
+    const centerActive = () => { const on = $('.ep-tile.active', ui.stack); if (on) ui.stack.scrollLeft = Math.max(0, on.offsetLeft - ui.stack.clientWidth / 2 + on.offsetWidth / 2); };
+    let stripTarget = null, stripIdle = null, drag = null;
+    const stripScroll = dx => {
+      const max = ui.stack.scrollWidth - ui.stack.clientWidth;
+      stripTarget = clamp((stripTarget == null ? ui.stack.scrollLeft : stripTarget) + dx, 0, max);
+      ui.stack.scrollTo({ left: stripTarget, behavior: 'smooth' });
+    };
+    function paintArrows() {
+      const x = ui.stack.scrollLeft, max = ui.stack.scrollWidth - ui.stack.clientWidth;
+      ui.arrowL.classList.toggle('show', max > 4 && x > 24);
+      ui.arrowR.classList.toggle('show', max > 4 && x < max - 4);
+    }
+    ui.stack.addEventListener('scroll', () => { clearTimeout(stripIdle); stripIdle = setTimeout(() => { stripTarget = null; paintArrows(); }, 180); }, { passive: true });
+    ui.arrowL.onclick = e => { e.stopPropagation(); stripScroll(-ui.stack.clientWidth * 0.8); };
+    ui.arrowR.onclick = e => { e.stopPropagation(); stripScroll(ui.stack.clientWidth * 0.8); };
+    new ResizeObserver(paintArrows).observe(ui.stack);
+    new MutationObserver(() => requestAnimationFrame(paintArrows)).observe(ui.stack, { childList: true });
+    ui.stack.addEventListener('wheel', e => {
+      const unit = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? ui.stack.clientWidth : 1;
+      const d = (Math.abs(e.deltaY) > Math.abs(e.deltaX) ? e.deltaY : e.deltaX) * unit;
+      if (!d) return;
+      e.preventDefault();
+      if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) ui.stack.scrollLeft += d; else stripScroll(d * 1.6);
+    }, { passive: false });
+    ui.stack.addEventListener('pointerdown', e => { if (e.pointerType === 'mouse' && e.button === 0) drag = { x: e.clientX, left: ui.stack.scrollLeft, moved: false }; });
+    window.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      if (!drag.moved && Math.abs(dx) < 6) return;
+      if (!drag.moved) { drag.moved = true; ui.stack.classList.add('dragging'); }
+      ui.stack.scrollLeft = drag.left - dx;
+    });
+    window.addEventListener('pointerup', () => {
+      if (!drag) return;
+      const moved = drag.moved;
+      drag = null;
+      ui.stack.classList.remove('dragging');
+      if (moved) { const stop = ev => { ev.stopPropagation(); ev.preventDefault(); }; ui.stack.addEventListener('click', stop, { capture: true, once: true }); setTimeout(() => ui.stack.removeEventListener('click', stop, { capture: true }), 50); }
     });
     ui.search.addEventListener('input', () => renderDrawer());
     ui.autonext.onclick = () => { Settings.set('autoplay', !S.autoplay); ui.autonext.classList.toggle('on', S.autoplay); };
     ui.drawerClose.onclick = closeDrawer; ui.drawerSheetClose.onclick = closeDrawer;
 
     const TABS = ['quality', 'subtitles', 'audio', 'servers', 'download', 'speed', 'display'];
-    const TAB_TITLES = { home: 'Settings', quality: 'Quality', subtitles: 'Subtitles', audio: 'Audio', servers: 'Servers', download: 'Download', speed: 'Speed', display: 'Display' };
+    const TAB_TITLES = { home: 'Settings', quality: 'Quality', subtitles: 'Subtitles', audio: 'Audio', servers: 'Server', download: 'Download', segments: 'Skip Segments', speed: 'Playback speed', display: 'Display', keys: 'Keyboard shortcuts' };
+    const MI = {
+      hq: '<span class="hq">HQ</span>',
+      globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
+      cc: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4M13 15h4M7 11h2M11 11h6"/></svg>',
+      audio: '<svg viewBox="0 0 24 24"><path d="M4 10v4h4l5 4V6L8 10H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11"/></svg>',
+      dl: '<svg class="i" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14"/></svg>',
+      speed: '<svg class="i" viewBox="0 0 24 24"><path d="M12 14l4-5M4 16a8 8 0 1 1 16 0"/><circle cx="12" cy="16" r="1.5"/></svg>',
+      display: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>',
+      keys: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></svg>',
+      subs: '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h10M7 11h4"/></svg>',
+      chev: '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
+      skip: '<svg class="i" viewBox="0 0 24 24"><path d="M18 13c0 3.31-2.69 6-6 6s-6-2.69-6-6 2.69-6 6-6v4l5-5-5-5v4"/></svg>',
+    };
+    const KEYS = [['<kbd>Space</kbd> or <kbd>K</kbd>', 'Play/Pause'], ['<kbd>←</kbd> or <kbd>J</kbd>', 'Rewind'], ['<kbd>→</kbd> or <kbd>L</kbd>', 'Forward'], ['<kbd>↑</kbd>', 'Volume up'], ['<kbd>↓</kbd>', 'Volume down'], ['<kbd>M</kbd>', 'Mute/Unmute'], ['<kbd>F</kbd>', 'Fullscreen'], ['<kbd>C</kbd>', 'Toggle subtitles'], ['<kbd>E</kbd>', 'Episodes drawer'], ['<kbd>N</kbd>', 'Next episode'], ['<kbd>P</kbd>', 'Mini player'], ['<kbd>S</kbd>', 'Settings'], ['<kbd>[</kbd> <kbd>]</kbd>', 'Speed'], ['<kbd>I</kbd>', 'Stats'], ['<kbd>0-9</kbd>', 'Jump to %']];
+    const subLabel = () => st.sid == null ? 'Off' : (st.subs[st.sid] ? langName(st.subs[st.sid].lang) : 'On');
     function openSettings(tab) {
       closeDrawer();
       st.tab = tab || 'home';
@@ -1212,25 +1288,39 @@
       $$('.settings-tabs .tab', ui.settingsWrap).forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
       $$('.settings-pane', ui.settingsWrap).forEach(p => p.classList.toggle('active', p.dataset.pane === tab));
       ui.settingsTitle.textContent = TAB_TITLES[tab] || 'Settings';
-      ui.settingsBack.style.visibility = tab === 'home' ? 'hidden' : 'visible';
+      $('.settings-panel', ui.settingsWrap).classList.toggle('at-home', tab === 'home');
       const pane = byId(`pane-${tab}`);
       if (!pane) return;
       const it = st.item;
       if (tab === 'home') {
-        pane.innerHTML = [
-          leadCard('Quality', S.maxHeight === 2160 ? '4K' : `${S.maxHeight}p`, false, 'data-go="quality"'),
-          leadCard('Subtitles', st.sid == null ? 'Off' : (st.subs[st.sid] ? langName(st.subs[st.sid].lang) : 'On'), false, 'data-go="subtitles"'),
-          leadCard('Audio', it && Item.isAnime(it) ? (it.dub ? 'Dub' : 'Sub') : (S.audioLang ? langName(S.audioLang) : 'Default'), false, 'data-go="audio"'),
-          leadCard('Servers', st.stream ? fullName(st.stream.source) : '—', false, 'data-go="servers"'),
-          leadCard('Speed', `${S.speed || 1}×`, false, 'data-go="speed"'),
-          leadCard('Display', 'Captions, size, sleep timer', false, 'data-go="display"'),
-          it && !it.offline ? leadCard('Download', Item.isMovie(it) ? 'Save this movie offline' : 'Save this episode offline', false, 'data-go="download"') : '',
-        ].join('');
+        const segs = ['intro', 'outro'].filter(k => st.stream && st.stream[k] && st.stream[k].length === 2).length;
+        const anime = it && Item.isAnime(it);
+        const tracks = (st.props['track-list'] || []).filter(t => t.type === 'audio').length;
+        const hasAudio = anime || tracks > 1 || (st.audioTracks || []).length > 1;
+        pane.innerHTML = `<div class="m-tiles">
+          <button type="button" class="m-tile" data-go="quality"><span class="k">${MI.hq} Quality</span><span class="v">${S.maxHeight === 2160 ? '4K' : `${S.maxHeight}p`}</span></button>
+          <button type="button" class="m-tile" data-go="servers"><span class="k">${MI.globe} Server</span><span class="v">${esc(st.stream ? fullName(st.stream.source) : 'Auto')}</span></button>
+          <button type="button" class="m-tile" data-go="subtitles"><span class="k">${MI.cc} Subtitles</span><span class="v">${esc(subLabel())}</span></button>
+          <button type="button" class="m-tile" data-go="audio" ${hasAudio ? '' : 'disabled'}><span class="k">${MI.audio} Audio</span><span class="v">${esc(anime ? (it.dub ? 'Dub' : 'Sub') : (S.audioLang ? langName(S.audioLang) : 'Default'))}</span></button>
+        </div>
+        ${it && !it.offline ? `<button type="button" class="m-row" data-go="download">${MI.dl}<span class="t">Download</span>${MI.chev}</button>` : ''}
+        <div class="m-div"></div>
+        <button type="button" class="m-row ${st.sid != null ? 'on' : ''}" data-act="subs">${MI.subs}<span class="t">Enable subtitles</span><span class="sw"></span></button>
+        <button type="button" class="m-row" data-go="speed">${MI.speed}<span class="t">Playback speed</span>${MI.chev}</button>
+        <button type="button" class="m-row" data-go="segments">${MI.skip}<span class="t">Skip Segments${segs ? `<span class="sub">${segs} segment${segs > 1 ? 's' : ''}</span>` : ''}</span>${MI.chev}</button>
+        <button type="button" class="m-row" data-go="display">${MI.display}<span class="t">Display</span>${MI.chev}</button>
+        <button type="button" class="m-row" data-go="keys">${MI.keys}<span class="t">Keyboard shortcuts</span>${MI.chev}</button>`;
+      } else if (tab === 'segments') {
+        const rows = [['Intro', 'intro'], ['Credits', 'outro']].map(([label, k]) => { const m = st.stream && st.stream[k]; return m && m.length === 2 ? `<div class="seg-row" data-s="${m[0]}"><span>${label}</span><span class="tm">${tclock(m[0])} – ${st.dur && m[1] >= st.dur - 2 ? 'End' : tclock(m[1])}</span></div>` : ''; }).join('');
+        pane.innerHTML = rows || '<div class="pane-note">No skip segments known for this episode.</div>';
+      } else if (tab === 'keys') {
+        pane.innerHTML = KEYS.map(([k, v]) => `<div class="shortcut-row"><span>${k}</span><span>${v}</span></div>`).join('');
       } else if (tab === 'quality') {
         pane.innerHTML = [2160, 1080, 720, 480].map(h => card(h === 2160 ? '4K' : `${h}p`, h === 2160 ? 'UHD' : h === 1080 ? 'HD' : h === 720 ? 'HD' : 'SD', S.maxHeight === h, `data-h="${h}"`)).join('');
       } else if (tab === 'subtitles') {
         const internal = (st.props['track-list'] || []).filter(t => t.type === 'sub' && !t.external);
-        pane.innerHTML = card('Off', 'No Subtitles', st.sid == null, 'data-sub="off"', true) + st.subs.map((s, i) => card(langName(s.lang), 'Built-in', st.sid === i, `data-sub="${i}"`)).join('') + internal.map(t => card(t.title || langName(t.lang) || `Track ${t.id}`, 'Embedded', t.selected && st.sid === -1, `data-tid="${t.id}"`)).join('');
+        const row = (label, badge, active, attrs, soft) => `<div class="opt-card${active ? ' active' : ''}" ${attrs}><span>${esc(label)}</span><span class="${soft ? 'badge-soft' : 'badge'}">${badge}</span></div>`;
+        pane.innerHTML = row('Off', 'No Subtitles', st.sid == null, 'data-sub="off"', true) + st.subs.map((s, i) => row(langName(s.lang), 'Built-in', st.sid === i, `data-sub="${i}"`)).join('') + internal.map(t => row(t.title || langName(t.lang) || `Track ${t.id}`, 'Embedded', t.selected && st.sid === -1, `data-tid="${t.id}"`)).join('');
       } else if (tab === 'audio') {
         const internal = (st.props['track-list'] || []).filter(t => t.type === 'audio');
         let html = '';
@@ -1245,14 +1335,18 @@
       } else if (tab === 'speed') {
         pane.innerHTML = [0.5, 0.75, 1, 1.25, 1.5, 2].map(v => card(v === 1 ? '1x (Normal)' : `${v}x`, '', (S.speed || 1) === v, `data-speed="${v}"`)).join('');
       } else if (tab === 'display') {
-        const segs = (key, opts, cur) => `<div style="display:flex;gap:4px;flex-wrap:wrap" data-seg="${key}">${opts.map(([v, l]) => `<button data-v="${v}" class="${cur === v ? 'active' : ''}" style="flex:1;min-width:44px;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:${cur === v ? 'rgba(220,38,38,0.18)' : 'rgba(255,255,255,0.04)'};color:${cur === v ? '#f87171' : '#fff'};font:inherit;font-size:11.5px;font-weight:600;cursor:pointer;letter-spacing:.02em">${l}</button>`).join('')}</div>`;
+        const segs = (key, opts, cur) => `<div style="display:flex;gap:4px;flex-wrap:wrap" data-seg="${key}">${opts.map(([v, l]) => `<button data-v="${v}" class="${cur === v ? 'active' : ''}" style="flex:1;min-width:44px;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);background:${cur === v ? 'rgba(220,38,38,0.18)' : 'rgba(255,255,255,0.04)'};color:${key === 'subColor' ? l : cur === v ? '#f87171' : '#fff'};font:inherit;font-size:11.5px;font-weight:600;cursor:pointer;letter-spacing:.02em">${key === 'subColor' ? '●' : l}</button>`).join('')}</div>`;
         const block = (title, inner) => `<div class="opt-card" style="flex-direction:column;align-items:stretch;gap:8px"><div style="font-size:12.5px;font-weight:600">${title}</div>${inner}</div>`;
+        const slider = (title, id, valId, value, unit, min, max, extra) => `<div class="opt-card" style="flex-direction:column;align-items:stretch;gap:8px"><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:12.5px;font-weight:600">${title}</span><span id="${valId}" style="font-size:11px;color:rgba(255,255,255,0.5);font-variant-numeric:tabular-nums">${value}${unit}</span></div><input id="${id}" type="range" min="${min}" max="${max}" step="1" value="${value}" style="width:100%;-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;background:rgba(255,255,255,0.16);outline:0">${extra || ''}</div>`;
+        const preset = (v, l) => `<button class="vs-pos-preset" data-v="${v}" style="flex:1;padding:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.04);color:#fff;font:inherit;font-size:10.5px;font-weight:600;cursor:pointer">${l}</button>`;
         const sleep = st.sleepAtEnd ? 'end' : st.sleepAt ? 'on' : 'off';
+        const pos = S.subPos == null ? 85 : S.subPos;
         pane.innerHTML = block('Player UI size', segs('uiScale', [['s', 'S'], ['m', 'M'], ['l', 'L'], ['xl', 'XL']], S.uiScale || 'm'))
-          + `<div class="opt-card" style="flex-direction:column;align-items:stretch;gap:8px"><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:12.5px;font-weight:600">Caption size</span><span id="vsd-size-val" style="font-size:11px;color:rgba(255,255,255,0.5);font-variant-numeric:tabular-nums">${S.subPx || 24}px</span></div><input id="vsd-size-slider" type="range" min="14" max="56" step="1" value="${S.subPx || 24}" style="width:100%;appearance:none;height:4px;border-radius:2px;background:rgba(255,255,255,0.16);outline:0"></div>`
+          + slider('Caption size', 'vsd-size-slider', 'vsd-size-val', S.subPx || 24, 'px', 14, 56)
+          + block('Caption font', segs('subFont', [['sans', 'Sans'], ['serif', 'Serif'], ['mono', 'Mono']], S.subFont || 'sans'))
+          + block('Caption color', segs('subColor', [['white', '#ffffff'], ['yellow', '#fde047'], ['red', '#f87171'], ['cyan', '#67e8f9']], S.subColor || 'white'))
           + block('Caption background', segs('subBg', [['shadow', 'Shadow'], ['box', 'Box'], ['none', 'None']], S.subBg || 'shadow'))
-          + block('Caption colour', segs('subColor', [['white', 'White'], ['yellow', 'Yellow'], ['red', 'Red'], ['cyan', 'Cyan']], S.subColor || 'white'))
-          + block('Caption position', segs('subLift', [[0, 'Bottom'], [40, 'Raised'], [120, 'Middle']], S.subLift || 0))
+          + slider('Caption position', 'vs-subpos', 'vsp-val', pos, '%', 0, 100, `<div style="display:flex;justify-content:space-between;font-size:10px;color:rgba(255,255,255,0.36);letter-spacing:0.08em;text-transform:uppercase;font-weight:600"><span>Top</span><span>Middle</span><span>Bottom</span></div><div style="display:flex;gap:6px;margin-top:4px">${preset(20, 'Top')}${preset(50, 'Center')}${preset(85, 'Default')}${preset(95, 'Below')}</div>`)
           + block('Sleep timer', segs('sleep', [['off', 'Off'], [15, '15m'], [30, '30m'], [60, '60m'], ['end', 'End of episode']], sleep === 'end' ? 'end' : sleep === 'on' ? null : 'off'))
           + card('Auto-play next episode', S.autoplay ? 'On' : 'Off', !!S.autoplay, 'data-toggle="autoplay"', true)
           + card('Auto-skip intros', S.autoSkip ? 'On' : 'Off', !!S.autoSkip, 'data-toggle="autoSkip"', true)
@@ -1263,6 +1357,15 @@
       if (e.target.closest('.settings-close, .menu-close, .sheet-close')) { closeSettings(); return; }
       if (e.target.closest('.menu-back')) { st.tab = 'home'; renderSettingsPane(); return; }
       const tabBtn = e.target.closest('.settings-tabs .tab'); if (tabBtn) { st.tab = tabBtn.dataset.tab; renderSettingsPane(); return; }
+      const go = e.target.closest('[data-go]'); if (go) { if (!go.disabled) { st.tab = go.dataset.go; renderSettingsPane(); } return; }
+      if (e.target.closest('[data-act="subs"]')) {
+        if (st.sid != null) selectSub(null);
+        else if (!st.subs.length) notify('No subtitles for this title');
+        else { const en = st.subs.findIndex(x => langMatch(x.lang, 'en')); selectSub(en >= 0 ? en : 0); }
+        return;
+      }
+      const segRow = e.target.closest('.seg-row'); if (segRow) { seek(Number(segRow.dataset.s) || 0, true); set('pause', 'no'); return; }
+      const posBtn = e.target.closest('.vs-pos-preset'); if (posBtn) { Settings.set('subPos', Number(posBtn.dataset.v)); applySubStyle(); renderSettingsPane(); return; }
       const seg = e.target.closest('[data-seg] button[data-v]');
       if (seg) {
         const key = seg.parentElement.dataset.seg; const raw = seg.dataset.v; const v = isNaN(Number(raw)) ? raw : Number(raw);
@@ -1272,7 +1375,6 @@
       }
       const c = e.target.closest('.opt-card'); if (!c) return;
       const d = c.dataset;
-      if (d.go) { st.tab = d.go; renderSettingsPane(); return; }
       if (d.h) { Settings.set('maxHeight', Number(d.h)); await Settings.push(); loadStream(st.streamIndex, st.pos); closeSettings(); return; }
       if (d.sub != null) { if (d.sub === 'off') selectSub(null); else selectSub(Number(d.sub)); return; }
       if (d.tid) { set('sid', d.tid); set('sub-visibility', 'yes'); st.sid = -1; renderSettingsPane(); return; }
@@ -1286,7 +1388,7 @@
       if (d.toggle === 'stats') { st.statsOn = !st.statsOn; renderStats(); renderSettingsPane(); return; }
       if (d.toggle) { Settings.set(d.toggle, !S[d.toggle]); if (d.toggle === 'autoplay') ui.autonext.classList.toggle('on', S.autoplay); renderSettingsPane(); }
     });
-    ui.settingsWrap.addEventListener('input', e => { if (e.target.id === 'vsd-size-slider') { Settings.set('subPx', Number(e.target.value)); const v = byId('vsd-size-val'); if (v) v.textContent = `${e.target.value}px`; applySubStyle(); } });
+    ui.settingsWrap.addEventListener('input', e => { if (e.target.id === 'vs-subpos') { Settings.set('subPos', Number(e.target.value)); const v = byId('vsp-val'); if (v) v.textContent = `${e.target.value}%`; applySubStyle(); } if (e.target.id === 'vsd-size-slider') { Settings.set('subPx', Number(e.target.value)); const v = byId('vsd-size-val'); if (v) v.textContent = `${e.target.value}px`; applySubStyle(); } });
     async function switchDubInPlayer(dub) {
       const it = st.item;
       try {
@@ -1350,7 +1452,7 @@
       clickTimer = setTimeout(() => togglePlay(), 230);
     });
     root.addEventListener('wheel', e => { if (e.target.closest('.drawer, .settings-panel-wrap')) return; setVolume(S.volume + (e.deltaY < 0 ? 5 : -5)); }, { passive: true });
-    document.addEventListener('click', e => { if (!e.target.closest('#season-pill-wrap')) ui.seasonDrop.classList.remove('open'); });
+    document.addEventListener('click', e => { if (!e.target.closest('#season-pill-wrap')) ui.seasonWrap.classList.remove('open'); });
     ui.playpause.onclick = togglePlay; ui.mPlay.onclick = togglePlay;
     ui.rew.onclick = () => seek(-S.skipSeconds); ui.mRew.onclick = () => seek(-S.skipSeconds);
     ui.ffw.onclick = () => seek(S.skipSeconds); ui.mFwd.onclick = () => seek(S.skipSeconds);
