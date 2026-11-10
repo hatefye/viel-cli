@@ -38,12 +38,31 @@ jobs:
           Copy-Item desktop/README.txt dist/
           Compress-Archive -Path dist/* -DestinationPath viel-windows.zip -Force
 
+      - name: Installer
+        shell: pwsh
+        run: |
+          $nsis = Get-Command makensis -ErrorAction SilentlyContinue
+          if (-not $nsis) {
+            $candidate = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+            if (-not (Test-Path $candidate)) { choco install nsis -y --no-progress | Out-Null }
+            $makensis = $candidate
+          } else {
+            $makensis = $nsis.Source
+          }
+          $version = (Select-String -Path desktop/Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          & $makensis "/DVERSION=$version" desktop/installer.nsi
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - uses: actions/upload-artifact@v4
         with:
           name: viel-windows
-          path: viel-windows.zip
+          path: |
+            viel-setup.exe
+            viel-windows.zip
 
       - uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: viel-windows.zip
+          files: |
+            viel-setup.exe
+            viel-windows.zip
