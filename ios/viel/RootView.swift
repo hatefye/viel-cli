@@ -12,6 +12,8 @@ struct RootView: View {
     @State private var recommended: [Title] = []
     @State private var linked: Linked?
     @ObservedObject private var shortcuts = Shortcuts.shared
+    @ObservedObject private var manga = MangaStore.shared
+    @State private var reading: MangaJump?
 
     struct Linked: Identifiable, Equatable {
         let title: Title
@@ -94,6 +96,8 @@ struct RootView: View {
         }
         .fullScreenCover(item: $playing) { PlayerView(item: $0).environmentObject(core) }
         .fullScreenCover(isPresented: $searching) { SearchView().environmentObject(core) }
+        .fullScreenCover(item: $reading) { MangaReader(start: $0.chapter).environmentObject(core) }
+        .onChange(of: core.profileEpoch) { _, _ in Task { await load() } }
     }
 
     private var header: some View {
@@ -132,6 +136,21 @@ struct RootView: View {
                                 }
                             } label: {
                                 Label("Remove from Continue Watching", systemImage: "trash")
+                            }
+                        }
+                }
+            }
+        }
+        if !manga.shelf.isEmpty {
+            Row(title: "Continue reading") {
+                ForEach(manga.shelf.prefix(12)) { mark in
+                    MangaResumeCard(mark: mark)
+                        .onTapGesture { reading = MangaJump(chapter: mark.chapter) }
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                manga.remove(mark.id)
+                            } label: {
+                                Label("Remove from Continue Reading", systemImage: "trash")
                             }
                         }
                 }

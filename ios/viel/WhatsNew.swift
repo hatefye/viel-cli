@@ -2,6 +2,8 @@ import SwiftUI
 
 enum ReleaseNotes {
     static let current: [(String, String, String)] = [
+        ("book", "Manga", "A new Manga tab with search, a long-strip reader and a page-by-page mode you can pinch to zoom. Your place carries over between the app and the site."),
+        ("person.2", "Profiles", "Up to five people on one account, each with their own list, history and manga. Switch under Settings → Profile."),
         ("checklist", "Every source gets a chance", "KotoTV and other slower sources no longer drop off the source list when a faster one answers first."),
         ("pip.fill", "Picture in Picture grew up", "Subtitles now show in the floating window, intros and credits skip themselves, and the next episode starts on its own without leaving PiP."),
         ("forward.end", "Next episode from anywhere", "The skip button on the lock screen, Control Center and your headphones jumps to the next episode."),

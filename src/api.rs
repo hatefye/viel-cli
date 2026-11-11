@@ -1,6 +1,7 @@
 use crate::{hls, net};
 use anyhow::{anyhow, bail, Result};
 use reqwest::blocking::{Client, RequestBuilder};
+use reqwest::Method;
 use reqwest::header::{COOKIE, SET_COOKIE};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -916,9 +917,37 @@ impl Api {
     }
 
     pub fn me(&self) -> Result<Option<String>> {
+        Ok(self.whoami()?.map(|(username, _)| username))
+    }
+
+    pub fn whoami(&self) -> Result<Option<(String, Option<String>)>> {
         let url = format!("{}/api/auth/me", self.host);
-        let resp: MeResp = self.authed(self.client.get(url)).send()?.json()?;
-        Ok(resp.user.map(|u| u.username))
+        let MeResp { user, profile } = self.authed(self.client.get(url)).send()?.json()?;
+        Ok(user.map(|u| (u.username, profile.map(|p| p.name))))
+    }
+
+    pub fn call(
+        &self,
+        method: Method,
+        path: &str,
+        query: &[(&str, &str)],
+        body: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value> {
+        let url = format!("{}{}", self.host, path);
+        let mut request = self.authed(self.client.request(method, url)).query(query);
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        let resp = request.send()?;
+        let status = resp.status();
+        let value: serde_json::Value = resp.json().unwrap_or_default();
+        if !status.is_success() {
+            match value.get("error").and_then(|e| e.as_str()) {
+                Some(message) => bail!("{message}"),
+                None => bail!("request failed ({status})"),
+            }
+        }
+        Ok(value)
     }
 
     pub fn history(&self) -> Result<Vec<HistoryEntry>> {
@@ -1721,6 +1750,12 @@ struct AnimeTrailer {
 #[derive(Deserialize)]
 struct MeResp {
     user: Option<MeUser>,
+    profile: Option<MeProfile>,
+}
+
+#[derive(Deserialize)]
+struct MeProfile {
+    name: String,
 }
 
 #[derive(Deserialize)]

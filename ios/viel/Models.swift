@@ -70,6 +70,18 @@ struct Details: Decodable {
     }
 }
 
+struct Profile: Decodable, Hashable, Identifiable {
+    let id: Int
+    let name: String
+    let color: String
+    let active: Bool
+}
+
+struct ProfileList: Decodable {
+    let profiles: [Profile]
+    let max: Int
+}
+
 struct Collection: Decodable {
     let name: String
     let parts: [Title]

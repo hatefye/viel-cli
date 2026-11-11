@@ -1,6 +1,7 @@
 use crate::api::{self, Api, ContinueRow, Details, Kind, ProgressUpdate, Stream, Title};
 use crate::{offline, relay};
 use anyhow::{bail, Result};
+use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -345,7 +346,56 @@ fn route(
             set_token(None);
             json!({ "ok": true })
         }
-        ("GET", "me") => json!({ "username": api.me().unwrap_or(None) }),
+        ("GET", "me") => {
+            let who = api.whoami().unwrap_or(None);
+            json!({ "username": who.as_ref().map(|w| w.0.clone()), "profile": who.and_then(|w| w.1) })
+        }
+        ("GET", "profiles") => api.call(Method::GET, "/api/me/profiles", &[], None)?,
+        ("POST", "profiles") => {
+            let p: ProfileIn = serde_json::from_slice(body)?;
+            let name = json!({ "name": p.name.unwrap_or_default() });
+            match (p.action.as_str(), p.id) {
+                ("create", _) => api.call(Method::POST, "/api/me/profiles", &[], Some(&name))?,
+                ("rename", Some(id)) => {
+                    api.call(Method::PATCH, &format!("/api/me/profiles/{id}"), &[], Some(&name))?
+                }
+                ("remove", Some(id)) => {
+                    api.call(Method::DELETE, &format!("/api/me/profiles/{id}"), &[], None)?
+                }
+                ("use", Some(id)) => {
+                    api.call(Method::POST, &format!("/api/me/profiles/{id}/use"), &[], None)?
+                }
+                _ => bail!("unknown profile action"),
+            }
+        }
+        ("GET", "manga/list") => {
+            let (text, offset, sort) = (q("q"), q("offset"), q("sort"));
+            if text.trim().is_empty() {
+                let query = [("sort", sort.as_str()), ("offset", offset.as_str())];
+                api.call(Method::GET, "/api/manga/popular", &query, None)?
+            } else {
+                let query = [("q", text.as_str()), ("offset", offset.as_str())];
+                api.call(Method::GET, "/api/manga/search", &query, None)?
+            }
+        }
+        ("GET", "manga/title") => {
+            api.call(Method::GET, &format!("/api/manga/title/{}", slug(&q("id"))), &[], None)?
+        }
+        ("GET", "manga/chapter") => {
+            api.call(Method::GET, &format!("/api/manga/chapter/{}", slug(&q("id"))), &[], None)?
+        }
+        ("GET", "manga/shelf") => api.call(Method::GET, "/api/me/manga", &[], None)?,
+        ("GET", "manga/state") => {
+            api.call(Method::GET, &format!("/api/me/manga/{}", slug(&q("id"))), &[], None)?
+        }
+        ("POST", "manga/progress") => {
+            let progress: Value = serde_json::from_slice(body)?;
+            api.call(Method::POST, "/api/me/manga", &[], Some(&progress))?
+        }
+        ("POST", "manga/remove") => {
+            let k: KeyIn = serde_json::from_slice(body)?;
+            api.call(Method::DELETE, &format!("/api/me/manga/{}", slug(&k.key)), &[], None)?
+        }
         ("GET", "activity") => {
             let a = relay::activity();
             json!({
@@ -405,6 +455,12 @@ fn route(
         _ => return Ok(None),
     };
     Ok(Some(value))
+}
+
+fn slug(id: &str) -> String {
+    id.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect()
 }
 
 fn parse_kind(kind: &str) -> Result<Kind> {
@@ -539,6 +595,13 @@ struct Progress {
 struct Login {
     username: String,
     password: String,
+}
+
+#[derive(Deserialize)]
+struct ProfileIn {
+    action: String,
+    id: Option<u64>,
+    name: Option<String>,
 }
 
 #[derive(Deserialize)]

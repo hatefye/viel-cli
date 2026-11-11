@@ -18,6 +18,11 @@ struct AccountView: View {
                 Section("Account") {
                     if let user = core.username {
                         LabeledContent("Signed in as", value: user)
+                        NavigationLink {
+                            ProfilesView()
+                        } label: {
+                            LabeledContent("Profile", value: core.profile ?? "")
+                        }
                         Button("Sign out", role: .destructive) {
                             Task { await core.logout() }
                         }

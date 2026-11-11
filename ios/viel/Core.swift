@@ -89,6 +89,8 @@ final class Core: ObservableObject {
     private var keepAlive: UIBackgroundTaskIdentifier = .invalid
     private let monitor = NWPathMonitor()
     @Published var username: String?
+    @Published var profile: String?
+    @Published var profileEpoch = 0
     @Published var offline = false
     @Published var expensive = false
     @Published var settings: Settings {
@@ -115,6 +117,7 @@ final class Core: ObservableObject {
             DownloadManager.shared.activate()
             await DownloadManager.shared.resume(core: self)
             await Watchlist.shared.sync(core: self)
+            await MangaStore.shared.sync(core: self)
         }
         monitor.pathUpdateHandler = { [weak self] path in
             Task { @MainActor in
@@ -185,21 +188,50 @@ final class Core: ObservableObject {
         UserDefaults.standard.set(reply.token, forKey: "token")
         self.username = reply.username
         log("app", "signed in")
+        await refreshUser()
         await Watchlist.shared.sync(core: self)
+        await MangaStore.shared.sync(core: self)
     }
 
     func logout() async {
         let _: Ok? = try? await post("logout", [String: String]())
         UserDefaults.standard.removeObject(forKey: "token")
         username = nil
+        profile = nil
     }
 
     func refreshUser() async {
         struct Me: Decodable {
             let username: String?
+            let profile: String?
         }
         let me: Me? = try? await get("me")
         username = me?.username
+        profile = me?.profile
+    }
+
+    func profiles() async throws -> ProfileList {
+        try await get("profiles")
+    }
+
+    func editProfiles(_ action: String, id: Int? = nil, name: String? = nil) async throws -> ProfileList {
+        struct Body: Encodable {
+            let action: String
+            let id: Int?
+            let name: String?
+        }
+        let list: ProfileList = try await post("profiles", Body(action: action, id: id, name: name))
+        profile = list.profiles.first(where: \.active)?.name
+        return list
+    }
+
+    func profileSwitched() async {
+        Memory.forgetPlayback()
+        MangaStore.shared.reset()
+        await Watchlist.shared.replace(core: self)
+        await MangaStore.shared.sync(core: self)
+        profileEpoch += 1
+        log("app", "profile switched")
     }
 
     func pushSettings() async {
@@ -428,6 +460,11 @@ enum Memory {
         if progress.duration > 0, progress.duration - progress.position < 30 {
             markWatched("\(progress.season)-\(progress.episode)", for: key)
         }
+    }
+
+    static func forgetPlayback() {
+        UserDefaults.standard.removeObject(forKey: "lastplayed")
+        UserDefaults.standard.removeObject(forKey: "watched")
     }
 
     static func watched(for title: String) -> Set<String> {

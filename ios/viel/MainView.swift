@@ -36,6 +36,9 @@ struct MainView: View {
             Tab("My List", systemImage: "star", value: "list") {
                 MyListView()
             }
+            Tab("Manga", systemImage: "book", value: "manga") {
+                MangaView()
+            }
             Tab("Settings", systemImage: "gearshape", value: "settings") {
                 AccountView(embedded: true)
             }
@@ -207,6 +210,14 @@ final class Watchlist: ObservableObject {
         Spotlight.index(items)
     }
 
+    @MainActor
+    func replace(core: Core) async {
+        guard let remote = await core.remoteWatchlist() else { return }
+        items = remote
+        persist()
+        Spotlight.index(items)
+    }
+
     private func persist() {
         if let data = try? JSONEncoder().encode(items) {
             UserDefaults.standard.set(data, forKey: "watchlist")
@@ -330,6 +341,7 @@ struct MyListView: View {
         .onChange(of: selected) { _, value in if value == nil { Task { await load() } } }
         .onChange(of: resuming) { _, value in if value == nil { Task { await load() } } }
         .onChange(of: playing) { _, value in if value == nil { Task { await load() } } }
+        .onChange(of: core.profileEpoch) { _, _ in Task { await load() } }
         .task {
             while !Task.isCancelled {
                 downloads = await core.downloads()
