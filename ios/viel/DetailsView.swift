@@ -7,6 +7,7 @@ struct DetailsView: View {
 
     @EnvironmentObject private var core: Core
     @ObservedObject private var watchlist = Watchlist.shared
+    @ObservedObject private var remote = Remote.shared
     @Environment(\.dismiss) private var dismiss
     @State private var details: Details?
     @State private var list: EpisodeList?
@@ -118,6 +119,7 @@ struct DetailsView: View {
                 .padding(.trailing, 16)
                 .padding(.top, 8)
         }
+        .task { await remote.refresh(core: core) }
         .task {
             dub = Memory.dub(for: title.key) ?? core.settings.dub
             await loadDetails()
@@ -396,6 +398,14 @@ struct DetailsView: View {
                                 Task { await markWatched(episode) }
                             } label: {
                                 Label("Mark as watched", systemImage: "checkmark.circle")
+                            }
+                            if let device = remote.target {
+                                Button {
+                                    Haptic.tap()
+                                    Task { await remote.send("open", path: Remote.path(kind: active.kind, id: active.id, season: episode.season, episode: Int(episode.number))) }
+                                } label: {
+                                    Label("Play on \(device.name)", systemImage: "tv")
+                                }
                             }
                         }
                 }

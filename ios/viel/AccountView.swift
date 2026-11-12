@@ -41,6 +41,18 @@ struct AccountView: View {
                     }
                 }
 
+                if core.username != nil {
+                    Section {
+                        NavigationLink {
+                            RemoteView()
+                        } label: {
+                            Label("Remote", systemImage: "appletvremote.gen4")
+                        }
+                    } footer: {
+                        Text("Control viel.tv playing in a browser on your computer, or start something on it from here.")
+                    }
+                }
+
                 Section("Playback") {
                     Picker("Max quality", selection: $core.settings.maxHeight) {
                         ForEach(qualities, id: \.self) { quality in

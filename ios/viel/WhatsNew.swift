@@ -2,6 +2,7 @@ import SwiftUI
 
 enum ReleaseNotes {
     static let current: [(String, String, String)] = [
+        ("appletvremote.gen4", "Remote", "Settings → Remote controls viel.tv playing on your computer: pause, seek, volume, next episode, or start something else. Long-press an episode for Play on your computer."),
         ("book", "Manga", "A new Manga tab with search, a long-strip reader and a page-by-page mode you can pinch to zoom. Your place carries over between the app and the site."),
         ("person.2", "Profiles", "Up to five people on one account, each with their own list, history and manga. Switch under Settings → Profile."),
         ("checklist", "Every source gets a chance", "KotoTV and other slower sources no longer drop off the source list when a faster one answers first."),

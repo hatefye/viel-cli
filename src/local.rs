@@ -368,6 +368,12 @@ fn route(
                 _ => bail!("unknown profile action"),
             }
         }
+        ("GET", "remote") => api.call(Method::GET, "/api/me/remote", &[], None)?,
+        ("POST", "remote") => {
+            let command: Value = serde_json::from_slice(body)?;
+            let device = slug(command["device"].as_str().unwrap_or_default());
+            api.call(Method::POST, &format!("/api/me/remote/{device}"), &[], Some(&command))?
+        }
         ("GET", "manga/list") => {
             let (text, offset, sort) = (q("q"), q("offset"), q("sort"));
             if text.trim().is_empty() {
