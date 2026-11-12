@@ -15,6 +15,7 @@ struct RemoteDevice: Decodable, Identifiable, Hashable {
     let position: Double
     let volume: Double
     let muted: Bool
+    let blocked: Bool?
 
     var heading: String {
         if !show.isEmpty { return show }
@@ -116,6 +117,9 @@ struct RemoteView: View {
                         playing(device)
                         transport(device)
                         volume(device)
+                        if device.blocked == true {
+                            blockedNote
+                        }
                         if let note {
                             Text(note).font(.system(size: 14)).foregroundStyle(Theme.accentHi)
                         }
@@ -156,6 +160,24 @@ struct RemoteView: View {
                 .foregroundStyle(Theme.muted)
         }
         .padding(.top, 30)
+    }
+
+    private var blockedNote: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("The browser is holding the sound", systemImage: "speaker.slash")
+                .font(.system(size: 15, weight: .semibold))
+            Text("This tab hasn't been clicked since it opened, so the browser only lets it play muted. One click anywhere on the page fixes it until the tab is closed. To never need the click, run the small file at viel.tv/remote/viel-sound.reg on that PC once and restart the browser.")
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.soft)
+            ShareLink(item: URL(string: "https://viel.tv/remote/viel-sound.reg")!) {
+                Text("Send the link to my PC").font(.system(size: 14, weight: .semibold))
+            }
+            .tint(Theme.accentHi)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Theme.border, lineWidth: 1))
     }
 
     private func picker(_ device: RemoteDevice) -> some View {
