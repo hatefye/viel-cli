@@ -394,7 +394,7 @@ fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
             reply(out, "200 OK", "text/vtt; charset=utf-8", body.as_bytes())?;
         }
         "t" => {
-            let body = fetch_subtitle(url, referer)?;
+            let body = joined_subtitle(fetch_subtitle(url, referer)?, url, referer);
             reply(out, "200 OK", "text/plain; charset=utf-8", &body)?;
         }
         "s" => return stream_segment(out, url, referer, file),
@@ -402,6 +402,31 @@ fn respond(out: &mut TcpStream, req: Request) -> Result<bool> {
         _ => reply(out, "404 Not Found", "text/plain", b"not found")?,
     }
     Ok(true)
+}
+
+fn joined_subtitle(body: Vec<u8>, url: &str, referer: Option<&str>) -> Vec<u8> {
+    let text = String::from_utf8_lossy(&body);
+    if !text.trim_start().starts_with("#EXTM3U") {
+        return body;
+    }
+    let Ok(base) = reqwest::Url::parse(url) else {
+        return body;
+    };
+    let mut out = String::from("WEBVTT\n\n");
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).take(60) {
+        let Ok(part) = base.join(line) else { continue };
+        let Ok(bytes) = fetch_subtitle(part.as_str(), referer) else { continue };
+        let piece = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
+        let cues = piece
+            .trim_start_matches('\u{feff}')
+            .split_once("\n\n")
+            .filter(|(head, _)| head.trim_start().starts_with("WEBVTT"))
+            .map(|(_, rest)| rest)
+            .unwrap_or(&piece);
+        out.push_str(cues.trim());
+        out.push_str("\n\n");
+    }
+    out.into_bytes()
 }
 
 fn fetch_subtitle(url: &str, referer: Option<&str>) -> Result<Vec<u8>> {

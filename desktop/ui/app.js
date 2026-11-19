@@ -76,6 +76,8 @@
     watched(key) { return new Set(this.map('watched')[key] || []); },
     markWatched(ep, key) { const m = this.map('watched'); const s = new Set(m[key] || []); s.add(ep); m[key] = Array.from(s); this.store('watched', m); },
     subtitle(t) { return this.map('subs')[this.key(t)]; },
+    subDelay(t, source) { return Number(this.map('subdelay')[`${this.key(t)}:${source}`]) || 0; },
+    rememberSubDelay(t, source, v) { const m = this.map('subdelay'); const k = `${this.key(t)}:${source}`; if (v) m[k] = v; else delete m[k]; this.store('subdelay', m); },
     rememberSubtitle(t, lang) { const m = this.map('subs'); m[this.key(t)] = lang == null ? 'off' : lang; this.store('subs', m); },
     recent() { try { return JSON.parse(localStorage.getItem('recent') || '[]'); } catch (_) { return []; } },
     addRecent(q) { const r = this.recent().filter(x => x.toLowerCase() !== q.toLowerCase()); r.unshift(q); localStorage.setItem('recent', JSON.stringify(r.slice(0, 8))); },
@@ -84,7 +86,7 @@
   const LANGS = { en: 'English', es: 'Spanish', fr: 'French', de: 'German', pt: 'Portuguese', it: 'Italian', ja: 'Japanese', ar: 'Arabic', ru: 'Russian', ko: 'Korean', zh: 'Chinese', tr: 'Turkish', pl: 'Polish', nl: 'Dutch', sv: 'Swedish', el: 'Greek', ro: 'Romanian', hi: 'Hindi', th: 'Thai', vi: 'Vietnamese', id: 'Indonesian' };
   const langName = code => { const c = String(code || '').toLowerCase(); return LANGS[c] || LANGS[c.slice(0, 2)] || (code || 'Unknown'); };
   const langMatch = (lang, pref) => { const a = String(lang || '').toLowerCase(), b = String(pref || '').toLowerCase(); return !!b && (a === b || a.slice(0, 2) === b.slice(0, 2)); };
-  const SOURCE_NAMES = { vixsrc: 'Vix', cno: 'Cino', mapple: 'Mapple', vidbolt: 'Bolt', vidrock: 'Rock', animekai: 'Kai', animeparadise: 'Paradise', luffy: 'Luffy', kototv: 'Koto', offline: 'Downloaded' };
+  const SOURCE_NAMES = { vixsrc: 'Vix', cno: 'Cino', mapple: 'Mapple', vidbolt: 'Bolt', vidrock: 'Rock', animekai: 'Kai', animeparadise: 'Paradise', luffy: 'Luffy', kototv: 'Koto', kaa: 'Kaa', reanime: 'Re', offline: 'Downloaded' };
   const sourceLabel = s => SOURCE_NAMES[s] || (s ? s[0].toUpperCase() + s.slice(1) : '');
   const kindLabel = k => k === 'movie' ? 'Movie' : k === 'anime' ? 'Anime' : 'Series';
   const numText = n => String(n);
@@ -765,7 +767,7 @@
     const get = name => invoke('player_get', { name }).catch(() => null);
     const pad = n => String(n).padStart(2, '0');
     const tclock = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return h ? `${h}:${pad(m)}:${pad(x)}` : `${pad(m)}:${pad(x)}`; };
-    const SOURCE_FULL = { vixsrc: 'VixSrc', cno: 'Cino', mapple: 'Mapple', vidbolt: 'VidBolt', vidrock: 'VidRock', animekai: 'AnimeKai', animeparadise: 'AnimeParadise', luffy: 'LuffyTV', kototv: 'KotoTV', offline: 'Downloaded' };
+    const SOURCE_FULL = { vixsrc: 'VixSrc', cno: 'Cino', mapple: 'Mapple', vidbolt: 'VidBolt', vidrock: 'VidRock', animekai: 'AnimeKai', animeparadise: 'AnimeParadise', luffy: 'LuffyTV', kototv: 'KotoTV', kaa: 'KickAss', reanime: 'ReAnime', offline: 'Downloaded' };
     const fullName = s => SOURCE_FULL[s] || sourceLabel(s);
 
     async function init() {
@@ -907,6 +909,8 @@
         if (pick < 0 && want !== 'off' && langMatch(sub.lang, want)) pick = i;
       }
       await selectSub(pick >= 0 ? pick : null, true);
+      st.subDelay = st.stream ? Memory.subDelay(st.item.title, st.stream.source) : 0;
+      await set('sub-delay', st.subDelay);
       if (st.stream && st.stream.hls && st.stream.source !== 'offline') api.get('audio', { url: st.stream.url }).then(rows => { st.audioTracks = rows || []; renderSettingsPane(); }).catch(() => { st.audioTracks = []; });
       drawMarkers();
       renderSettingsPane();
@@ -927,6 +931,14 @@
         await set('sub-visibility', 'yes');
       }
       if (!silent) { Memory.rememberSubtitle(st.item.title, index == null ? null : st.subs[index].lang); notify(index == null ? 'Subtitles off' : `Subtitles: ${langName(st.subs[index].lang)}`); }
+      renderSettingsPane();
+    }
+    function nudgeSubs(by) {
+      if (!st.item || !st.stream) return;
+      st.subDelay = by == null ? 0 : Math.round(clamp((st.subDelay || 0) + by, -30, 30) * 10) / 10;
+      set('sub-delay', st.subDelay);
+      Memory.rememberSubDelay(st.item.title, st.stream.source, st.subDelay);
+      notify(st.subDelay ? `Subtitles ${Math.abs(st.subDelay).toFixed(1)}s ${st.subDelay > 0 ? 'later' : 'earlier'}` : 'Subtitle timing reset');
       renderSettingsPane();
     }
     function renderTitle() {
@@ -1269,7 +1281,7 @@
       chev: '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
       skip: '<svg class="i" viewBox="0 0 24 24"><path d="M18 13c0 3.31-2.69 6-6 6s-6-2.69-6-6 2.69-6 6-6v4l5-5-5-5v4"/></svg>',
     };
-    const KEYS = [['<kbd>Space</kbd> or <kbd>K</kbd>', 'Play/Pause'], ['<kbd>←</kbd> or <kbd>J</kbd>', 'Rewind'], ['<kbd>→</kbd> or <kbd>L</kbd>', 'Forward'], ['<kbd>↑</kbd>', 'Volume up'], ['<kbd>↓</kbd>', 'Volume down'], ['<kbd>M</kbd>', 'Mute/Unmute'], ['<kbd>F</kbd>', 'Fullscreen'], ['<kbd>C</kbd>', 'Toggle subtitles'], ['<kbd>E</kbd>', 'Episodes drawer'], ['<kbd>N</kbd>', 'Next episode'], ['<kbd>P</kbd>', 'Mini player'], ['<kbd>S</kbd>', 'Settings'], ['<kbd>[</kbd> <kbd>]</kbd>', 'Speed'], ['<kbd>I</kbd>', 'Stats'], ['<kbd>0-9</kbd>', 'Jump to %']];
+    const KEYS = [['<kbd>Space</kbd> or <kbd>K</kbd>', 'Play/Pause'], ['<kbd>←</kbd> or <kbd>J</kbd>', 'Rewind'], ['<kbd>→</kbd> or <kbd>L</kbd>', 'Forward'], ['<kbd>↑</kbd>', 'Volume up'], ['<kbd>↓</kbd>', 'Volume down'], ['<kbd>M</kbd>', 'Mute/Unmute'], ['<kbd>F</kbd>', 'Fullscreen'], ['<kbd>C</kbd>', 'Toggle subtitles'], ['<kbd>Z</kbd> / <kbd>X</kbd>', 'Subtitles earlier / later'], ['<kbd>E</kbd>', 'Episodes drawer'], ['<kbd>N</kbd>', 'Next episode'], ['<kbd>P</kbd>', 'Mini player'], ['<kbd>S</kbd>', 'Settings'], ['<kbd>[</kbd> <kbd>]</kbd>', 'Speed'], ['<kbd>I</kbd>', 'Stats'], ['<kbd>0-9</kbd>', 'Jump to %']];
     const subLabel = () => st.sid == null ? 'Off' : (st.subs[st.sid] ? langName(st.subs[st.sid].lang) : 'On');
     function openSettings(tab) {
       closeDrawer();
@@ -1320,7 +1332,8 @@
       } else if (tab === 'subtitles') {
         const internal = (st.props['track-list'] || []).filter(t => t.type === 'sub' && !t.external);
         const row = (label, badge, active, attrs, soft) => `<div class="opt-card${active ? ' active' : ''}" ${attrs}><span>${esc(label)}</span><span class="${soft ? 'badge-soft' : 'badge'}">${badge}</span></div>`;
-        pane.innerHTML = row('Off', 'No Subtitles', st.sid == null, 'data-sub="off"', true) + st.subs.map((s, i) => row(langName(s.lang), 'Built-in', st.sid === i, `data-sub="${i}"`)).join('') + internal.map(t => row(t.title || langName(t.lang) || `Track ${t.id}`, 'Embedded', t.selected && st.sid === -1, `data-tid="${t.id}"`)).join('');
+        pane.innerHTML = row('Off', 'No Subtitles', st.sid == null, 'data-sub="off"', true) + st.subs.map((s, i) => row(langName(s.lang), 'Built-in', st.sid === i, `data-sub="${i}"`)).join('') + internal.map(t => row(t.title || langName(t.lang) || `Track ${t.id}`, 'Embedded', t.selected && st.sid === -1, `data-tid="${t.id}"`)).join('')
+          + (st.sid != null ? `<div class="sub-timing"><div class="st-head"><span>Timing</span><b>${st.subDelay ? `${Math.abs(st.subDelay).toFixed(1)}s ${st.subDelay > 0 ? 'later' : 'earlier'}` : 'In sync'}</b></div><div class="st-row"><button type="button" data-nudge="-0.5">−0.5s</button><button type="button" data-nudge="-0.1">−0.1s</button><button type="button" data-nudge="0">Reset</button><button type="button" data-nudge="0.1">+0.1s</button><button type="button" data-nudge="0.5">+0.5s</button></div><p>Captions showing too early? Press +. Too late? Press −. Saved for this title.</p></div>` : '');
       } else if (tab === 'audio') {
         const internal = (st.props['track-list'] || []).filter(t => t.type === 'audio');
         let html = '';
@@ -1364,6 +1377,7 @@
         else { const en = st.subs.findIndex(x => langMatch(x.lang, 'en')); selectSub(en >= 0 ? en : 0); }
         return;
       }
+      const nudge = e.target.closest('[data-nudge]'); if (nudge) { const v = Number(nudge.dataset.nudge); nudgeSubs(v === 0 ? null : v); return; }
       const segRow = e.target.closest('.seg-row'); if (segRow) { seek(Number(segRow.dataset.s) || 0, true); set('pause', 'no'); return; }
       const posBtn = e.target.closest('.vs-pos-preset'); if (posBtn) { Settings.set('subPos', Number(posBtn.dataset.v)); applySubStyle(); renderSettingsPane(); return; }
       const seg = e.target.closest('[data-seg] button[data-v]');
@@ -1419,6 +1433,8 @@
         case 'm': case 'M': toggleMute(); break;
         case 'f': case 'F': case 'F11': toggleFullscreen(); break;
         case 'c': case 'C': if (st.subs.length) selectSub(st.sid == null ? 0 : null); break;
+        case 'z': case 'Z': if (st.sid != null) nudgeSubs(e.shiftKey ? -0.5 : -0.1); break;
+        case 'x': case 'X': if (st.sid != null) nudgeSubs(e.shiftKey ? 0.5 : 0.1); break;
         case 'n': case 'N': if (Item.next(st.item)) goNext(); break;
         case 'e': case 'E': toggleDrawer(); break;
         case 'p': case 'P': toggleMini(); break;
@@ -1497,6 +1513,15 @@
   byId('nav-profile').onclick = openAccount;
   $$('.winctl button').forEach(b => b.onclick = () => invoke('win', { action: b.dataset.win }));
   byId('dragbar').addEventListener('dblclick', () => invoke('win', { action: 'maximize' }));
+  const playerBar = $('#player-root .topbar');
+  const grip = e => e.button === 0 && !e.target.closest('button, a, input, select, [role="button"], .season-pill-wrap, .tb-icon');
+  playerBar.addEventListener('mousedown', e => { if (grip(e) && e.detail < 2) invoke('win', { action: 'drag' }); });
+  playerBar.addEventListener('dblclick', e => { if (grip(e)) invoke('win', { action: 'maximize' }); });
+  $('.nav').addEventListener('mousedown', e => { if (e.button === 0 && e.detail < 2 && (e.target.classList.contains('pill') || e.target.classList.contains('divide'))) invoke('win', { action: 'drag' }); });
+
+  const fit = () => { const w = window.innerWidth; document.documentElement.style.setProperty('--fit', (Math.round(clamp(Math.min(w / 1300, window.innerHeight / 720), 1, 3) * 100) / 100).toFixed(2)); };
+  fit();
+  window.addEventListener('resize', fit);
   window.addEventListener('scroll', () => { byId('topnav').classList.toggle('scrolled', window.scrollY > 40); }, { passive: true });
   let windowFull = false;
   document.addEventListener('keydown', e => {

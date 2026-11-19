@@ -614,6 +614,16 @@ impl Api {
         let referer = body
             .headers
             .and_then(|h| h.get("Referer").or_else(|| h.get("referer")).cloned());
+        let subs = body
+            .subtitles
+            .into_iter()
+            .filter(|s| !s.file.is_empty())
+            .map(|s| Subtitle {
+                url: s.file,
+                referer: s.r#ref.filter(|r| !r.is_empty()),
+                lang: s.lang.or(s.label).unwrap_or_default(),
+            })
+            .collect();
         let (raw, hls) = match (body.m3u8, body.mp4) {
             (Some(m), _) => (m, true),
             (None, Some(m)) => (m, false),
@@ -631,7 +641,7 @@ impl Api {
             hls,
             title: title.to_string(),
             start,
-            subs: Vec::new(),
+            subs,
             intro: None,
             outro: None,
             thumbs: None,
@@ -1605,6 +1615,8 @@ struct Extractor {
     m3u8: Option<String>,
     mp4: Option<String>,
     headers: Option<HashMap<String, String>>,
+    #[serde(default)]
+    subtitles: Vec<SubRaw>,
 }
 
 #[derive(Deserialize)]

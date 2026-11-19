@@ -1084,9 +1084,10 @@ fn names() -> &'static NameCache {
 }
 
 fn with_subs(api: &Api, lang: &str, path: &str, mut streams: Vec<Stream>) -> Vec<Stream> {
-    let subs = api::pick_subs(api.subtitles(path), lang);
+    let shared = api::pick_subs(api.subtitles(path), lang);
     for s in &mut streams {
-        s.subs = subs.clone();
+        let own = api::pick_subs(std::mem::take(&mut s.subs), lang);
+        s.subs = if own.is_empty() { shared.clone() } else { own };
     }
     streams
 }
