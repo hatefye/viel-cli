@@ -53,7 +53,7 @@
   const toast = (text, ms, onClick) => { const t = byId('toast'); t.textContent = text; t.onclick = onClick || null; t.style.cursor = onClick ? 'pointer' : ''; t.classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms || 2600); };
 
   const Settings = {
-    data: Object.assign({ maxHeight: 1080, downloadHeight: 1080, subtitleLang: 'en', audioLang: '', subSize: 1, skipSeconds: 10, autoplay: true, hwdec: true, volume: 100, mute: false, speed: 1, subBg: 'shadow', subColor: 'white', subPx: 24, subLift: 0, uiScale: 'm', dub: false, heroRotate: true, autoSkip: false, presence: true, tray: true, updates: true }, JSON.parse(localStorage.getItem('settings') || '{}')),
+    data: Object.assign({ skipFiller: false, autoUpdate: true, remote: true, maxHeight: 1080, downloadHeight: 1080, subtitleLang: 'en', audioLang: '', subSize: 1, skipSeconds: 10, autoplay: true, hwdec: true, volume: 100, mute: false, speed: 1, subBg: 'shadow', subColor: 'white', subPx: 24, subLift: 0, uiScale: 'm', dub: false, heroRotate: true, autoSkip: false, presence: true, tray: true, updates: true }, JSON.parse(localStorage.getItem('settings') || '{}')),
     save() { localStorage.setItem('settings', JSON.stringify(this.data)); },
     set(k, v) { this.data[k] = v; this.save(); },
     push() { return api.post('settings', { max_height: this.data.maxHeight, subtitle_lang: this.data.subtitleLang, audio_lang: this.data.audioLang || '' }).catch(() => {}); },
@@ -86,7 +86,7 @@
   const LANGS = { en: 'English', es: 'Spanish', fr: 'French', de: 'German', pt: 'Portuguese', it: 'Italian', ja: 'Japanese', ar: 'Arabic', ru: 'Russian', ko: 'Korean', zh: 'Chinese', tr: 'Turkish', pl: 'Polish', nl: 'Dutch', sv: 'Swedish', el: 'Greek', ro: 'Romanian', hi: 'Hindi', th: 'Thai', vi: 'Vietnamese', id: 'Indonesian' };
   const langName = code => { const c = String(code || '').toLowerCase(); return LANGS[c] || LANGS[c.slice(0, 2)] || (code || 'Unknown'); };
   const langMatch = (lang, pref) => { const a = String(lang || '').toLowerCase(), b = String(pref || '').toLowerCase(); return !!b && (a === b || a.slice(0, 2) === b.slice(0, 2)); };
-  const SOURCE_NAMES = { vixsrc: 'Vix', cno: 'Cino', mapple: 'Mapple', vidbolt: 'Bolt', vidrock: 'Rock', animekai: 'Kai', animeparadise: 'Paradise', luffy: 'Luffy', kototv: 'Koto', kaa: 'Kaa', reanime: 'Re', offline: 'Downloaded' };
+  const SOURCE_NAMES = { vixsrc: 'Vix', cno: 'CNO', mapple: 'Mapple', vidbolt: 'Bolt', vidrock: 'Rock', animekai: 'Kai', animeparadise: 'Paradise', luffy: 'Luffy', kototv: 'Koto', kaa: 'Kaa', reanime: 'Re', offline: 'Downloaded' };
   const sourceLabel = s => SOURCE_NAMES[s] || (s ? s[0].toUpperCase() + s.slice(1) : '');
   const kindLabel = k => k === 'movie' ? 'Movie' : k === 'anime' ? 'Anime' : 'Series';
   const numText = n => String(n);
@@ -94,13 +94,23 @@
   const epLabel = (ep, anime) => ep.name ? `${epTag(ep, anime)} · ${ep.name}` : epTag(ep, anime);
   const tkey = t => `${t.kind}-${t.id}`;
 
+  const Filler = {
+    sets: {},
+    load(id) {
+      if (this.sets[id]) return Promise.resolve(this.sets[id]);
+      const entry = this.sets[id] = { filler: new Set(), mixed: new Set() };
+      return api.get('filler', { id: String(id) }).then(r => { (r.filler || []).forEach(n => entry.filler.add(Number(n))); (r.mixed || []).forEach(n => entry.mixed.add(Number(n))); return entry; }).catch(() => entry);
+    },
+    kind(id, number) { const e = this.sets[id]; const n = Math.trunc(number); return !e ? '' : e.filler.has(n) ? 'filler' : e.mixed.has(n) ? 'mixed' : ''; },
+  };
+
   const Item = {
     make(title, episodes, index, dub, startAt, chain, offline) { return { title, episodes: episodes || [], index: index || 0, dub: !!dub, startAt: startAt || null, chain: chain || [], offline: offline || null }; },
     ep: it => it.episodes[it.index] || null,
     isAnime: it => it.title.kind === 'anime',
     isMovie: it => it.title.kind === 'movie',
     heading(it) { const e = this.ep(it); return e ? `${it.title.name} · ${epLabel(e, this.isAnime(it))}${it.dub ? ' (dub)' : ''}` : it.title.name; },
-    next(it) { if (this.isMovie(it) || !it.episodes[it.index + 1]) return null; return this.make(it.title, it.episodes, it.index + 1, it.dub, null, it.chain); },
+    next(it) { if (this.isMovie(it) || !it.episodes[it.index + 1]) return null; let i = it.index + 1; if (S.skipFiller && this.isAnime(it)) while (it.episodes[i + 1] && Filler.kind(it.title.id, it.episodes[i].number) === 'filler') i++; return this.make(it.title, it.episodes, i, it.dub, null, it.chain); },
     at(it, i) { return this.make(it.title, it.episodes, i, it.dub, null, it.chain); },
     request(it) { const e = this.ep(it); return { kind: it.title.kind, id: it.title.id, title: this.heading(it), season: e ? e.season : 0, episode: e ? e.number : 0, dub: it.dub, sources: e ? e.sources || [] : [] }; },
     progress(it, position, duration) { const e = this.ep(it); const name = this.isAnime(it) ? (e && e.name ? e.name : it.title.name) : it.title.name; return { kind: it.title.kind, id: it.title.id, season: e ? e.season : 0, episode: e ? Math.trunc(e.number) : 0, position, duration, title: name }; },
@@ -108,6 +118,7 @@
     downloadMeta(it) { const e = this.ep(it); return { name: it.title.name, label: e ? epLabel(e, this.isAnime(it)) + (it.dub ? ' (dub)' : '') : (it.title.year || kindLabel(it.title.kind)), kind: it.title.kind, id: it.title.id, season: e ? e.season : 0, episode: e ? e.number : 0, poster: it.title.poster, still: e ? e.still : null, dub: it.dub }; },
   };
 
+  const Pages = {};
   const App = { boot: {}, user: null, mode: 'home', page: null, home: null, homeAt: 0, history: null, historyAt: 0, downloads: [], active: {}, watchlist: null, titles: {}, details: {}, lists: {} };
   const content = byId('content');
   const heroBox = byId('hero');
@@ -233,10 +244,44 @@
     return railEl(title, rows.slice(0, 20).map(cardHtml).join(''));
   }
 
+  const wideHtml = t => { remember(t); return `<a class="lcard" data-key="${tkey(t)}"><div class="lthumb">${(t.backdrop || t.poster) ? `<img loading="lazy" src="${esc(t.backdrop || t.poster)}" alt="">` : ''}<span class="pf">${I.play}</span></div><div class="lt">${esc(t.name)}</div><div class="ly">${esc([t.year, t.rating > 0 ? '★ ' + Number(t.rating).toFixed(1) : ''].filter(Boolean).join(' · '))}</div></a>`; };
+  function topRail(d) {
+    const sec = railEl('Top 10', '', { top10: true, side: '' });
+    const head = $('.rail-title', sec);
+    head.innerHTML = 'Top 10 <button type="button" class="rail-when" data-menu="1"><span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button>';
+    const strip = $('.rail-scroll', sec), when = $('.rail-when', sec);
+    const paint = async range => {
+      $('span', when).textContent = range === 'day' ? 'Today' : 'This week';
+      let rows = range === 'day' ? (d.top || []) : App.lists['trending/all/week'];
+      if (!rows) { try { rows = await api.get('list', { path: 'trending/all/week' }); App.lists['trending/all/week'] = rows; } catch (_) { rows = d.trending || []; } }
+      strip.innerHTML = rows.slice(0, 10).map((t, i) => top10Html(t, i + 1)).join('');
+      strip.scrollLeft = 0;
+    };
+    when.onclick = () => menuAt(when, [['day', 'Today'], ['week', 'This week']].map(([v, label]) => ({ label, on: S.topRange === v || (!S.topRange && v === 'day'), run: () => { Settings.set('topRange', v); paint(v); } })));
+    paint(S.topRange || 'day');
+    return sec;
+  }
+  function trendingRail(d) {
+    const sec = railEl('Trending now', '', { side: '<div class="rail-tabs"><button type="button" data-k="movie">Movies</button><button type="button" data-k="tv">Series</button></div>' });
+    const strip = $('.rail-scroll', sec);
+    const paint = async kind => {
+      $$('.rail-tabs button', sec).forEach(b => b.classList.toggle('on', b.dataset.k === kind));
+      const path = `trending/${kind}/week`;
+      let rows = App.lists[path];
+      if (!rows) { try { rows = await api.get('list', { path }); App.lists[path] = rows; } catch (_) { rows = (d.trending || []).filter(t => t.kind === kind); } }
+      strip.innerHTML = rows.slice(0, 20).map(wideHtml).join('');
+      strip.scrollLeft = 0;
+      rows.slice(0, 20).filter(t => !t.backdrop).forEach(t => detailsFor(t).then(x => { if (!x || !x.backdrop) return; t.backdrop = x.backdrop; const img = $(`.lcard[data-key="${tkey(t)}"] img`, strip); if (img) img.src = x.backdrop; }));
+    };
+    $$('.rail-tabs button', sec).forEach(b => b.onclick = () => { Settings.set('trendKind', b.dataset.k); paint(b.dataset.k); });
+    paint(S.trendKind || 'movie');
+    return sec;
+  }
+
   async function showMode(mode) {
     App.mode = mode; App.page = null;
     $$('.tab[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
-    $$('.nicon').forEach(b => b.classList.remove('on'));
+    $$('.nicon, .tab[data-page]').forEach(b => b.classList.remove('on'));
     window.scrollTo({ top: 0 });
     content.innerHTML = '';
     heroBox.classList.remove('collapsed');
@@ -259,8 +304,8 @@
       if (cont.length) add(railEl('Continue Watching', cont.map(cwHtml).join(''), { id: 'rail-continue' }));
       if (App.watchlist === null) { try { App.watchlist = await api.get('watchlist'); } catch (_) { App.watchlist = []; } if (gen !== pageGen) return; }
       if (App.watchlist.length) add(railEl('My List', App.watchlist.slice(0, 20).map(t => cardHtml(Object.assign({ year: '', rating: 0, genres: [] }, t))).join('')));
-      add(railEl('Top 10 Today', (d.top || []).slice(0, 10).map((t, i) => top10Html(t, i + 1)).join(''), { top10: true }));
-      add(railEl('Trending This Week', (d.trending || []).map(cardHtml).join('')));
+      add(topRail(d));
+      add(trendingRail(d));
       add(railEl('Popular Series', (d.popular_tv || []).map(cardHtml).join('')));
       add(railEl('Anime', (d.anime || []).map(cardHtml).join('')));
       add(railEl('Top Rated Movies', (d.top_rated || []).map(cardHtml).join('')));
@@ -293,13 +338,14 @@
   async function showPage(name) {
     App.page = name;
     $$('.tab[data-mode]').forEach(b => b.classList.remove('on'));
-    $$('.nicon').forEach(b => b.classList.toggle('on', b.id === `nav-${name}`));
+    $$('.nicon, .tab[data-page]').forEach(b => b.classList.toggle('on', b.id === `nav-${name}`));
     ++pageGen; ++heroGen; clearTimeout(heroTimer);
     heroBox.classList.add('collapsed'); heroBox.innerHTML = '';
     window.scrollTo({ top: 0 });
     content.innerHTML = '';
     if (name === 'downloads') return renderDownloads();
     if (name === 'history') return renderHistory();
+    if (Pages[name]) return Pages[name](content);
   }
 
   async function renderDownloads() {
@@ -428,6 +474,7 @@
     Object.assign(info, { d, title, list, row: opts.row || rowFor(t.kind, t.id), season: null, watched: Memory.watched(key), downloaded: new Set((App.downloads || []).filter(x => x.state === 'done').map(x => x.key)) });
     api.get('downloads').then(rows => { App.downloads = rows; if (info && info.key === key) { info.downloaded = new Set(rows.filter(x => x.state === 'done').map(x => x.key)); renderEpisodes(); } }).catch(() => {});
     renderInfo();
+    if (title.kind === 'anime' && !Filler.sets[title.id]) Filler.load(title.id).then(f => { if ((f.filler.size || f.mixed.size) && info && info.key === key) renderEpisodes(); });
     if (opts.autoplay) { const item = resumeItem(info); if (item) Player.start(item); }
   }
 
@@ -543,7 +590,7 @@
       const isCur = i === cur && st.row && !(st.row.duration > 0 && st.row.duration - st.row.position < 30);
       const frac = isCur && st.row.duration ? st.row.position / st.row.duration : (seen ? 1 : 0);
       const have = st.downloaded.has(Item.downloadKey(item));
-      const row = el(`<div class="ip-ep${isCur ? ' on' : ''}"><div class="th">${(e.still || d.backdrop) ? `<img loading="lazy" src="${esc(e.still || d.backdrop)}" alt="">` : ''}<span class="n">${esc(title.kind === 'anime' ? `E${numText(e.number)}` : `E${Math.trunc(e.number)}`)}</span>${frac > 0 ? `<div class="prog"><i style="width:${Math.round(frac * 100)}%"></i></div>` : ''}${seen && !isCur ? `<div class="seen">${I.check}</div>` : ''}</div><div class="tx"><div class="t">${esc(e.name || `Episode ${numText(e.number)}`)}</div>${e.overview ? `<div class="o">${esc(e.overview)}</div>` : ''}<div class="r">${esc([e.runtime || d.runtime ? human(e.runtime || d.runtime) : '', isCur ? `${clock(Math.max(st.row.duration - st.row.position, 0))} left` : ''].filter(Boolean).join(' · '))}</div></div><button class="dl${have ? ' done' : ''}" title="${have ? 'Downloaded' : 'Download'}">${have ? I.check : I.download}</button></div>`);
+      const row = el(`<div class="ip-ep${isCur ? ' on' : ''}"><div class="th">${(e.still || d.backdrop) ? `<img loading="lazy" src="${esc(e.still || d.backdrop)}" alt="">` : ''}<span class="n">${esc(title.kind === 'anime' ? `E${numText(e.number)}` : `E${Math.trunc(e.number)}`)}</span>${frac > 0 ? `<div class="prog"><i style="width:${Math.round(frac * 100)}%"></i></div>` : ''}${seen && !isCur ? `<div class="seen">${I.check}</div>` : ''}</div><div class="tx"><div class="t">${esc(e.name || `Episode ${numText(e.number)}`)}${title.kind === 'anime' && Filler.kind(title.id, e.number) ? `<span class="fill-tag ${Filler.kind(title.id, e.number)}">${Filler.kind(title.id, e.number) === 'filler' ? 'Filler' : 'Part filler'}</span>` : ''}</div>${e.overview ? `<div class="o">${esc(e.overview)}</div>` : ''}<div class="r">${esc([e.runtime || d.runtime ? human(e.runtime || d.runtime) : '', isCur ? `${clock(Math.max(st.row.duration - st.row.position, 0))} left` : ''].filter(Boolean).join(' · '))}</div></div><button class="dl${have ? ' done' : ''}" title="${have ? 'Downloaded' : 'Download'}">${have ? I.check : I.download}</button></div>`);
       row.addEventListener('click', ev => {
         if (ev.target.closest('.dl')) { if (!have) startDownload(item, ev.target.closest('.dl')); return; }
         Player.start(Item.make(title, eps, i, list.dub, isCur ? st.row.position : null, d.seasons || []));
@@ -656,6 +703,7 @@
         ${row('Hardware decoding', 'Decodes on the GPU. Turn off if you see glitches.', sw('hwdec'), 'hwdec')}
         ${row('Auto-play next episode', 'Rolls into the next one with a short countdown.', sw('autoplay'), 'autoplay')}
         ${row('Auto-skip intros', 'Jumps past intros the moment they start.', sw('autoSkip'), 'autoSkip')}
+        ${row('Skip filler episodes', 'Anime only. Next and auto-play pass over episodes that are not from the source material.', sw('skipFiller'), 'skipFiller')}
         ${row('Skip buttons', 'Seconds for the arrows and the skip buttons.', seg('skipSeconds', [10, 15, 30], v => `${v}s`))}
       </div>
       <div class="vs-section"><div class="vs-label">Subtitles &amp; audio</div>
@@ -674,6 +722,8 @@
         ${row('Discord presence', 'Shows what you are watching on your Discord profile.', sw('presence'), 'presence')}
         ${row('Keep running in the tray', 'Closing the window hides viel instead of quitting. Quit from the tray icon.', sw('tray'), 'tray')}
         ${row('Check for updates', 'Tells you when a newer build is on viel.tv.', sw('updates'), 'updates')}
+        ${row('Install updates automatically', 'Downloads a new version in the background and installs it the next time viel starts.', sw('autoUpdate'), 'autoUpdate')}
+        ${row('Phone remote', 'Lets the viel iPhone app see this PC and control what plays here.', sw('remote'), 'remote')}
         ${row('Media keys', 'Play/pause, next and previous track keys work anywhere.', '')}
       </div>
       <div class="vs-section"><div class="vs-label">Keyboard</div><div class="vs-keys">
@@ -714,6 +764,7 @@
         <dl class="vs-facts"><div class="vs-fact"><dt>Server</dt><dd><input id="acc-host" value="${esc(App.boot.host || '')}" spellcheck="false"></dd></div><div class="vs-fact"><dt>Version</dt><dd>${esc(App.boot.version || '')}</dd></div><div class="vs-fact"><dt>Player</dt><dd>${App.boot.mpv ? `<span style="color:#f87171">${esc(App.boot.mpv)}</span>` : 'libmpv ready'}</dd></div></dl>
         <div class="vs-foot"><a style="cursor:pointer;text-decoration:underline;text-underline-offset:3px" id="acc-site">Open viel.tv</a><button class="vs-signout" id="acc-out">Sign out</button></div>`;
       byId('acc-site').onclick = () => invoke('open_external', { url: App.boot.host || 'https://viel.tv' });
+      if (window.Viel.accountExtra) window.Viel.accountExtra(m.body);
       byId('acc-host').onchange = async e => { await invoke('set_host', { host: e.target.value }); App.boot.host = e.target.value.trim() || 'https://viel.tv'; App.home = null; App.lists = {}; toast('Server updated'); };
       byId('acc-out').onclick = async () => { await api.post('logout').catch(() => {}); setUser(null); App.home = null; App.watchlist = null; App.history = null; m.close(); accountModal = null; openAccount(); };
     } else {
@@ -767,7 +818,7 @@
     const get = name => invoke('player_get', { name }).catch(() => null);
     const pad = n => String(n).padStart(2, '0');
     const tclock = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return h ? `${h}:${pad(m)}:${pad(x)}` : `${pad(m)}:${pad(x)}`; };
-    const SOURCE_FULL = { vixsrc: 'VixSrc', cno: 'Cino', mapple: 'Mapple', vidbolt: 'VidBolt', vidrock: 'VidRock', animekai: 'AnimeKai', animeparadise: 'AnimeParadise', luffy: 'LuffyTV', kototv: 'KotoTV', kaa: 'KickAss', reanime: 'ReAnime', offline: 'Downloaded' };
+    const SOURCE_FULL = { vixsrc: 'VixSrc', cno: 'CNO', mapple: 'Mapple', vidbolt: 'VidBolt', vidrock: 'VidRock', animekai: 'AnimeKai', animeparadise: 'AnimeParadise', luffy: 'LuffyTV', kototv: 'KotoTV', kaa: 'KickAss', reanime: 'ReAnime', offline: 'Downloaded' };
     const fullName = s => SOURCE_FULL[s] || sourceLabel(s);
 
     async function init() {
@@ -835,6 +886,7 @@
       if (infoOv.classList.contains('open')) closeInfo();
       Object.assign(st, { item, streams: [], stream: null, streamIndex: -1, pos: item.startAt || 0, dur: 0, dismissedNext: false, skipped: new Set(), subs: [], sid: null, audioTracks: null, lastSavedPos: -1, finishedAt: 0, loading: true, ended: false, details: App.details[tkey(item.title)] || null });
       st.candidates = candidatesFor(item);
+      if (Item.isAnime(item)) Filler.load(item.title.id);
       ui.nextOv.classList.add('hidden'); ui.skip.classList.add('hidden'); ui.endActions.classList.add('hidden'); ui.markers.innerHTML = '';
       closeDrawer(); closeSettings();
       root.classList.toggle('is-movie', Item.isMovie(item));
@@ -1267,7 +1319,7 @@
     ui.drawerClose.onclick = closeDrawer; ui.drawerSheetClose.onclick = closeDrawer;
 
     const TABS = ['quality', 'subtitles', 'audio', 'servers', 'download', 'speed', 'display'];
-    const TAB_TITLES = { home: 'Settings', quality: 'Quality', subtitles: 'Subtitles', audio: 'Audio', servers: 'Server', download: 'Download', segments: 'Skip Segments', speed: 'Playback speed', display: 'Display', keys: 'Keyboard shortcuts' };
+    const TAB_TITLES = { home: 'Settings', quality: 'Quality', subtitles: 'Subtitles', audio: 'Audio', servers: 'Server', download: 'Download', clip: 'Clip', segments: 'Skip Segments', speed: 'Playback speed', display: 'Display', keys: 'Keyboard shortcuts' };
     const MI = {
       hq: '<span class="hq">HQ</span>',
       globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>',
@@ -1315,7 +1367,7 @@
           <button type="button" class="m-tile" data-go="subtitles"><span class="k">${MI.cc} Subtitles</span><span class="v">${esc(subLabel())}</span></button>
           <button type="button" class="m-tile" data-go="audio" ${hasAudio ? '' : 'disabled'}><span class="k">${MI.audio} Audio</span><span class="v">${esc(anime ? (it.dub ? 'Dub' : 'Sub') : (S.audioLang ? langName(S.audioLang) : 'Default'))}</span></button>
         </div>
-        ${it && !it.offline ? `<button type="button" class="m-row" data-go="download">${MI.dl}<span class="t">Download</span>${MI.chev}</button>` : ''}
+        ${it && !it.offline ? `<button type="button" class="m-row" data-go="download">${MI.dl}<span class="t">Download</span>${MI.chev}</button><button type="button" class="m-row" data-go="clip">${MI.skip}<span class="t">Clip a scene</span>${MI.chev}</button>` : ''}
         <div class="m-div"></div>
         <button type="button" class="m-row ${st.sid != null ? 'on' : ''}" data-act="subs">${MI.subs}<span class="t">Enable subtitles</span><span class="sw"></span></button>
         <button type="button" class="m-row" data-go="speed">${MI.speed}<span class="t">Playback speed</span>${MI.chev}</button>
@@ -1345,6 +1397,10 @@
         pane.innerHTML = st.streams.map((s, i) => leadCard(fullName(s.source), [s.hls ? 'HLS' : 'MP4', s.subs && s.subs.length ? `${s.subs.length} subtitle${s.subs.length > 1 ? 's' : ''}` : '', i === st.streamIndex ? 'playing' : ''].filter(Boolean).join(' · '), i === st.streamIndex, `data-srv="${i}"`)).join('') || card('No other sources', '', true);
       } else if (tab === 'download') {
         pane.innerHTML = it ? leadCard(Item.isMovie(it) ? 'Download this movie' : 'Download this episode', `${S.downloadHeight === 2160 ? '4K' : `${S.downloadHeight}p`} · saved to this PC`, false, 'data-dl="1"') + [2160, 1080, 720, 480].map(h => card(h === 2160 ? '4K' : `${h}p`, 'download quality', S.downloadHeight === h, `data-dlh="${h}"`)).join('') : '';
+      } else if (tab === 'clip') {
+        if (!st.clip || st.clip.for !== st.item) { const a = Math.max(0, Math.floor(st.pos) - 15); st.clip = { for: st.item, a, b: Math.min(st.dur || a + 30, a + 30) }; }
+        const c = st.clip, len = c.b - c.a;
+        pane.innerHTML = `<div class="clip-box"><div class="clip-row"><span>Start</span><b>${tclock(c.a)}</b><button type="button" data-clip="a">Set to now</button></div><div class="clip-row"><span>End</span><b>${tclock(c.b)}</b><button type="button" data-clip="b">Set to now</button></div><div class="clip-len${len < 1 || len > 1200 ? ' bad' : ''}">${len < 1 ? 'The end has to come after the start.' : len > 1200 ? 'Clips can be up to 20 minutes.' : `${tclock(len)} long, from ${esc(st.stream ? fullName(st.stream.source) : '')}`}</div><button type="button" class="clip-go" data-clip="go" ${len < 1 || len > 1200 || st.clipBusy ? 'disabled' : ''}>${st.clipBusy ? 'Cutting the clip…' : 'Save clip'}</button><p>Saved as an MP4 in your downloads folder, cut from the source and audio you are watching. Needs an account with clipping.</p></div>`;
       } else if (tab === 'speed') {
         pane.innerHTML = [0.5, 0.75, 1, 1.25, 1.5, 2].map(v => card(v === 1 ? '1x (Normal)' : `${v}x`, '', (S.speed || 1) === v, `data-speed="${v}"`)).join('');
       } else if (tab === 'display') {
@@ -1376,6 +1432,20 @@
         else if (!st.subs.length) notify('No subtitles for this title');
         else { const en = st.subs.findIndex(x => langMatch(x.lang, 'en')); selectSub(en >= 0 ? en : 0); }
         return;
+      }
+      const clipBtn = e.target.closest('[data-clip]');
+      if (clipBtn) {
+        const k = clipBtn.dataset.clip, c = st.clip;
+        if (k === 'a') { c.a = Math.floor(st.pos); if (c.b <= c.a) c.b = Math.min(st.dur || c.a + 30, c.a + 30); }
+        else if (k === 'b') c.b = Math.max(Math.ceil(st.pos), 1);
+        else if (k === 'go') {
+          if (!App.user) { notify('Sign in to save clips'); return; }
+          const r = clipRequest(c.a, c.b);
+          if (!r) return;
+          st.clipBusy = true;
+          invoke('clip_save', r);
+        }
+        renderSettingsPane(); return;
       }
       const nudge = e.target.closest('[data-nudge]'); if (nudge) { const v = Number(nudge.dataset.nudge); nudgeSubs(v === 0 ? null : v); return; }
       const segRow = e.target.closest('.seg-row'); if (segRow) { seek(Number(segRow.dataset.s) || 0, true); set('pause', 'no'); return; }
@@ -1491,6 +1561,7 @@
     ui.seek.addEventListener('change', () => { st.scrubbing = false; seek(Number(ui.seek.value) / 100 * st.dur, true); });
     ui.progress.addEventListener('mousedown', e => { if (e.target === ui.seek) return; if (!st.dur) return; seek(scrubAt(e) * st.dur, true); });
     listen('mpv', onEvent);
+    listen('clip', p => { st.clipBusy = false; renderSettingsPane(); if (p.ok) { notify('Clip saved'); toast(`Saved ${p.name}. Click to show it.`, 7000, () => invoke('reveal_file', { path: p.file })); } else notify(`Clip failed: ${p.error}`, 6000); });
     setInterval(tick, 1000);
     refreshSkip();
     paintVolume();
@@ -1502,7 +1573,44 @@
       else if (key === 'stop') close();
     }
     function pause() { if (st.open && st.item && !st.paused) set('pause', 'yes'); }
-    return { init, start, close, set, applySubStyle, refreshSkip, presence, media, pause, get open() { return st.open; } };
+    function remoteState() {
+      const it = st.item, e = it ? Item.ep(it) : null;
+      const live = st.open && !!it && !st.loading && st.dur > 0;
+      const path = !st.open || !it ? '/' : Item.isMovie(it) ? `/movies/${it.title.id}` : Item.isAnime(it) ? `/anime/${it.title.id}/${e ? Math.trunc(e.number) : 1}` : `/tv/${it.title.id}/${e ? e.season : 1}/${e ? Math.trunc(e.number) : 1}`;
+      return { path, title: it && st.open ? Item.heading(it) : 'viel', visible: !document.hidden, video: live, paused: live ? !!st.paused : true, position: live ? st.pos : 0, duration: live ? st.dur : 0, volume: clamp((S.volume || 0) / 100, 0, 1), muted: !!S.mute, rate: S.speed || 1, blocked: false };
+    }
+    function remoteCommand(c) {
+      if (!st.open || !st.item) return;
+      const n = Number(c.value) || 0;
+      if (c.cmd === 'play') set('pause', 'no');
+      else if (c.cmd === 'pause') set('pause', 'yes');
+      else if (c.cmd === 'seek') seek(n, true);
+      else if (c.cmd === 'skip') seek(n);
+      else if (c.cmd === 'volume') { if (S.mute && n > 0) toggleMute(); setVolume(n * 100); }
+      else if (c.cmd === 'mute') { if (!!c.value !== !!S.mute) toggleMute(); }
+      else if (c.cmd === 'next') goNext();
+      showControls();
+    }
+    function clipRequest(a, b) {
+      const it = st.item, e = it && Item.ep(it), src = st.stream ? st.stream.source : '';
+      if (!it || !st.stream || src === 'offline') return null;
+      const q = new URLSearchParams({ start: a.toFixed(2), end: b.toFixed(2), exact: '1', title: it.title.name });
+      let base;
+      if (Item.isAnime(it)) {
+        base = `/api/download/anime/${it.title.id}/${e ? numText(e.number) : 1}/${it.dub ? 'dub' : 'sub'}`;
+        const own = ((e && e.sources) || []).find(x => x.provider === src);
+        if (own && own.id) q.set('raw', own.id);
+      } else {
+        base = Item.isMovie(it) ? `/api/download/movie/${it.title.id}` : `/api/download/tv/${it.title.id}/${e.season}/${Math.trunc(e.number)}`;
+        q.set('src', src);
+      }
+      const audio = (st.props['track-list'] || []).find(t => t.type === 'audio' && t.selected);
+      const lang = (audio && (audio.lang || audio.title)) || S.audioLang;
+      if (lang) q.set('audio', lang);
+      const tag = e ? ` ${Item.isAnime(it) ? `E${numText(e.number)}` : `S${e.season}E${Math.trunc(e.number)}`}` : '';
+      return { path: `${base}?${q.toString()}`, name: `${it.title.name}${tag} ${tclock(a).replace(/:/g, '.')}-${tclock(b).replace(/:/g, '.')}` };
+    }
+    return { init, start, close, set, applySubStyle, refreshSkip, presence, media, pause, remoteState, remoteCommand, clipRequest, notify, get open() { return st.open; }, get position() { return st.pos; }, get duration() { return st.dur; }, get item() { return st.item; } };
   })();
 
   $$('.tab[data-mode]').forEach(b => b.onclick = () => showMode(b.dataset.mode));
@@ -1511,6 +1619,7 @@
   byId('nav-downloads').onclick = () => showPage('downloads');
   byId('nav-settings').onclick = openSettings;
   byId('nav-profile').onclick = openAccount;
+  $$('[data-page]').forEach(b => b.onclick = () => showPage(b.dataset.page));
   $$('.winctl button').forEach(b => b.onclick = () => invoke('win', { action: b.dataset.win }));
   byId('dragbar').addEventListener('dblclick', () => invoke('win', { action: 'maximize' }));
   const playerBar = $('#player-root .topbar');
@@ -1534,22 +1643,13 @@
   });
 
   const newer = (a, b) => { const x = String(a || '').split('.').map(Number), y = String(b || '').split('.').map(Number); for (let i = 0; i < 3; i++) { if ((x[i] || 0) > (y[i] || 0)) return true; if ((x[i] || 0) < (y[i] || 0)) return false; } return false; };
-  async function checkUpdates() {
-    if (!S.updates || !App.boot.version) return;
-    try {
-      const r = await fetch(`${App.boot.host}/desktop/version.json`, { cache: 'no-store' });
-      if (!r.ok) return;
-      const j = await r.json();
-      if (j && newer(j.version, App.boot.version)) toast(`viel ${j.version} is out. Click to download.`, 9000, () => invoke('open_external', { url: j.url || `${App.boot.host}/desktop/viel-windows.zip` }));
-    } catch (_) {}
-  }
+  window.Viel = { api, invoke, listen, log, App, S, Settings, Pages, Player, openInfo, showMode, showPage, toast, modal, menuAt, el, esc, $, $$, byId, I, clock };
   listen('media', key => Player.media(key));
   listen('tray', p => { if (p && p.hidden) Player.pause(); });
   async function main() {
     document.documentElement.classList.toggle('fine-pointer', matchMedia('(hover:hover) and (pointer:fine)').matches);
     try { App.boot = await invoke('boot'); } catch (e) { App.boot = { host: 'https://viel.tv' }; }
     invoke('set_tray', { on: !!S.tray }).catch(() => {});
-    setTimeout(checkUpdates, 4000);
     byId('foot-version').textContent = App.boot.version || '';
     setUser(App.boot.username);
     Settings.push();

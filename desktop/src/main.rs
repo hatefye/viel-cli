@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod downloads;
+mod extras;
 mod mpv;
 mod native;
 mod presence;
@@ -225,6 +226,40 @@ fn open_downloads() {
 }
 
 #[tauri::command]
+fn clip_save(handle: AppHandle, path: String, name: String) {
+    extras::clip(handle, path, name);
+}
+
+#[tauri::command]
+fn reveal_file(path: String) {
+    let file = PathBuf::from(&path);
+    let inside = downloads::root_dir().map(|root| file.starts_with(root)).unwrap_or(false);
+    if inside {
+        if let Some(dir) = file.parent() {
+            native::open(&dir.to_string_lossy());
+        }
+    }
+}
+
+#[tauri::command]
+fn update_fetch(app: State<App>, handle: AppHandle, url: String, version: String, sha256: String) {
+    if extras::newer(&version, env!("CARGO_PKG_VERSION")) {
+        extras::update(handle, app.dir.clone(), app.host(), url, version, sha256);
+    }
+}
+
+#[tauri::command]
+fn update_pending(app: State<App>) -> Option<String> {
+    extras::pending(&app.dir, env!("CARGO_PKG_VERSION")).map(|(version, _)| version)
+}
+
+#[tauri::command]
+fn update_install(app: State<App>) -> Result<(), String> {
+    let (_, path) = extras::pending(&app.dir, env!("CARGO_PKG_VERSION")).ok_or("no update is waiting")?;
+    extras::install(&path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn log(tag: String, msg: String) {
     local::log(&tag, msg);
 }
@@ -245,6 +280,11 @@ fn win(window: WebviewWindow, action: String, on: Option<bool>) -> Result<Value,
         "fullscreen" => window.set_fullscreen(on).map(|_| Value::Null),
         "ontop" => window.set_always_on_top(on).map(|_| Value::Null),
         "drag" => window.start_dragging().map(|_| Value::Null),
+        "show" => window
+            .show()
+            .and_then(|_| window.unminimize())
+            .and_then(|_| window.set_focus())
+            .map(|_| Value::Null),
         "mini" => mini(&window, on).map(|_| Value::Null),
         "state" => Ok(json!({
             "maximized": window.is_maximized().unwrap_or(false),
@@ -362,7 +402,7 @@ fn main() {
                 .build(),
         )
         .on_window_event(|window, event| match event {
-            WindowEvent::Resized(_) => {
+            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => {
                 if let Some(w) = window.get_webview_window("main") {
                     native::fit_child(&w);
                 }
@@ -394,6 +434,11 @@ fn main() {
             downloads_active,
             open_external,
             open_downloads,
+            clip_save,
+            reveal_file,
+            update_fetch,
+            update_pending,
+            update_install,
             log,
             win,
             set_tray,

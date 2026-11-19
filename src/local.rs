@@ -125,6 +125,10 @@ pub fn configure(host: &str, token: Option<String>) {
     s.api = Api::new(&s.host, token);
 }
 
+pub fn client() -> Api {
+    state().read().unwrap().api.clone()
+}
+
 pub fn subtitle_proxy(url: &str, referer: Option<&str>) -> Option<String> {
     let host = state().read().unwrap().host.clone();
     if host.is_empty() || url.starts_with(&host) {
@@ -374,6 +378,26 @@ fn route(
             let device = slug(command["device"].as_str().unwrap_or_default());
             api.call(Method::POST, &format!("/api/me/remote/{device}"), &[], Some(&command))?
         }
+        ("POST", "remote/device") => {
+            let state: Value = serde_json::from_slice(body)?;
+            api.call(Method::POST, "/api/me/remote/device", &[], Some(&state))?
+        }
+        ("GET", "filler") => {
+            let id: u64 = q("id").parse().unwrap_or(0);
+            api.call(Method::GET, &format!("/api/filler/{id}"), &[], None)?
+        }
+        ("GET", "dialogue") => {
+            let text = q("q");
+            api.call(Method::GET, "/api/dialogue/search", &[("q", text.as_str())], None)?
+        }
+        ("POST", "trace") => {
+            let t: TraceIn = serde_json::from_slice(body)?;
+            match (t.image, t.url) {
+                (Some(image), _) => api.upload("/api/trace", &t.mime.unwrap_or_else(|| "image/jpeg".into()), unbase64(&image))?,
+                (None, Some(url)) => api.call(Method::POST, "/api/trace", &[], Some(&json!({ "url": url })))?,
+                _ => anyhow::bail!("nothing to look up"),
+            }
+        }
         ("GET", "manga/list") => {
             let (text, offset, sort) = (q("q"), q("offset"), q("sort"));
             if text.trim().is_empty() {
@@ -461,6 +485,36 @@ fn route(
         _ => return Ok(None),
     };
     Ok(Some(value))
+}
+
+#[derive(Deserialize)]
+struct TraceIn {
+    image: Option<String>,
+    mime: Option<String>,
+    url: Option<String>,
+}
+
+fn unbase64(text: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u8);
+    for c in text.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' | b'-' => 62,
+            b'/' | b'_' => 63,
+            _ => continue,
+        };
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    out
 }
 
 fn slug(id: &str) -> String {

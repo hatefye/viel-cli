@@ -29,6 +29,7 @@ VIAddVersionKey "LegalCopyright" "viel"
 
 !include "MUI2.nsh"
 !include "x64.nsh"
+!include "LogicLib.nsh"
 
 !define MUI_ICON "icons\icon.ico"
 !define MUI_UNICON "icons\icon.ico"
@@ -60,6 +61,12 @@ FunctionEnd
 
 Function un.onInit
   SetRegView 64
+FunctionEnd
+
+Function .onInstSuccess
+  ${If} ${Silent}
+    Exec '"$WINDIR\explorer.exe" "$INSTDIR\${EXE}"'
+  ${EndIf}
 FunctionEnd
 
 Function DesktopShortcut

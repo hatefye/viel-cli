@@ -960,6 +960,33 @@ impl Api {
         Ok(value)
     }
 
+    pub fn upload(&self, path: &str, mime: &str, bytes: Vec<u8>) -> Result<serde_json::Value> {
+        let url = format!("{}{}", self.host, path);
+        let resp = self
+            .authed(self.client.post(url))
+            .header("content-type", mime)
+            .body(bytes)
+            .timeout(Duration::from_secs(40))
+            .send()?;
+        let status = resp.status();
+        let value: serde_json::Value = resp.json().unwrap_or_default();
+        if !status.is_success() {
+            match value.get("error").and_then(|e| e.as_str()) {
+                Some(message) => bail!("{message}"),
+                None => bail!("request failed ({status})"),
+            }
+        }
+        Ok(value)
+    }
+
+    pub fn open(&self, path: &str) -> Result<reqwest::blocking::Response> {
+        let url = format!("{}{}", self.host, path);
+        Ok(self
+            .authed(self.client.get(url))
+            .timeout(Duration::from_secs(900))
+            .send()?)
+    }
+
     pub fn history(&self) -> Result<Vec<HistoryEntry>> {
         let url = format!("{}/api/me/history", self.host);
         let resp = self.authed(self.client.get(url)).send()?;

@@ -23,9 +23,13 @@
   <button class="tab" data-mode="movie">Movies</button>
   <button class="tab" data-mode="tv">TV</button>
   <button class="tab" data-mode="anime">Anime</button>
+  <button class="tab" data-page="manga" id="nav-manga">Manga</button>
   <span class="divide"></span>
   <button class="nicon" id="nav-search-btn" aria-label="Search" title="Search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+  </button>
+  <button class="nicon" id="nav-find" data-page="find" aria-label="Find a scene" title="Find a scene">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3"/></svg>
   </button>
   <button class="nicon" id="nav-history" aria-label="History" title="History">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
@@ -243,6 +247,7 @@
           <div class="settings-pane" data-pane="audio" id="pane-audio"></div>
           <div class="settings-pane" data-pane="servers" id="pane-servers"></div>
           <div class="settings-pane" data-pane="download" id="pane-download"></div>
+          <div class="settings-pane" data-pane="clip" id="pane-clip"></div>
           <div class="settings-pane" data-pane="speed" id="pane-speed"></div>
           <div class="settings-pane" data-pane="display" id="pane-display"></div>
         </div>
@@ -288,5 +293,6 @@
 <div id="toast"></div>
 <div id="ctx" class="pmenu" hidden></div>
 <script src="app.js"></script>
+<script src="extras.js"></script>
 </body>
 </html>

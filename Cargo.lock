@@ -5400,7 +5400,7 @@ dependencies = [
 
 [[package]]
 name = "viel-desktop"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "discord-rich-presence",
@@ -5408,6 +5408,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-global-shortcut",
